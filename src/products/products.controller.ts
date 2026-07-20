@@ -3,43 +3,70 @@ import { ProductsService } from './products.service';
 import { CreateProductDto, UpdateProductDto } from './dto/product.dto';
 import { AdminGuard } from '../auth/admin.guard';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { imageUploadMiddleware, uploadFolders } from '../uploads/image-upload.middleware';
+import { UploadFilesService } from '../uploads/upload-files.service';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import * as fs from 'fs';
 
 @Controller()
 export class ProductsController {
-  constructor(private readonly productsService: ProductsService) {}
+  constructor(
+    private readonly productsService: ProductsService,
+    private readonly uploadFilesService: UploadFilesService,
+  ) {}
 
   // --- ADMIN ROUTES ---
 
   @UseGuards(AdminGuard)
   @Post('admin/products/upload')
   @UseInterceptors(
-    FileInterceptor('image', {
-      storage: diskStorage({
-        destination: (req, file, callback) => {
-          const folder = join(process.cwd(), 'uploads', 'product');
-          if (!fs.existsSync(folder)) fs.mkdirSync(folder, { recursive: true });
-          callback(null, folder);
-        },
-        filename: (req, file, callback) => {
-          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-          const ext = extname(file.originalname);
-          callback(null, `${uniqueSuffix}${ext}`);
-        },
-      }),
-    }),
+    FileInterceptor('image', { storage: imageUploadMiddleware('product') }),
   )
   uploadProductImage(@UploadedFile() file: any) {
     if (!file) {
       throw new BadRequestException('No file uploaded');
     }
-    // Store the relative path in DB: /product/filename.ext
-    const relativePath = `/product/${file.filename}`;
+    const imagePath = this.uploadFilesService.relativePath('product', file.filename);
     return {
-      imageUrl: `http://localhost:8080/uploads${relativePath}`,
-      imagePath: relativePath,
+      imageUrl: this.uploadFilesService.imageUrl(imagePath),
+      imagePath,
+    };
+  }
+
+  @UseGuards(AdminGuard)
+  @Post('admin/uploads/:folder')
+  @UseInterceptors(
+    FileInterceptor('image', {
+      storage: diskStorage({
+        destination: (request, _file, callback) => {
+          const folder = request.params.folder;
+          if (!(uploadFolders as readonly string[]).includes(folder)) {
+            callback(new BadRequestException('Unsupported upload folder'), '');
+            return;
+          }
+          const destination = join(process.cwd(), 'uploads', folder);
+          fs.mkdirSync(destination, { recursive: true });
+          callback(null, destination);
+        },
+        filename: (_request, file, callback) => {
+          const extension = extname(file.originalname).toLowerCase();
+          callback(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${extension}`);
+        },
+      }),
+    }),
+  )
+  uploadAdminImage(@Param('folder') folder: string, @UploadedFile() file: any) {
+    if (!this.uploadFilesService.isSupportedFolder(folder)) {
+      throw new BadRequestException('Unsupported upload folder');
+    }
+    if (!file) {
+      throw new BadRequestException('No file uploaded');
+    }
+    const imagePath = this.uploadFilesService.relativePath(folder, file.filename);
+    return {
+      imageUrl: this.uploadFilesService.imageUrl(imagePath),
+      imagePath,
     };
   }
 
@@ -119,6 +146,12 @@ export class ProductsController {
   @Patch('admin/products/:id')
   update(@Param('id') id: string, @Body() updateProductDto: UpdateProductDto) {
     return this.productsService.update(id, updateProductDto);
+  }
+
+  @UseGuards(AdminGuard)
+  @Delete('admin/products/:productId/images/:imageId')
+  removeImage(@Param('productId') productId: string, @Param('imageId') imageId: string) {
+    return this.productsService.removeImage(productId, imageId);
   }
 
   @UseGuards(AdminGuard)

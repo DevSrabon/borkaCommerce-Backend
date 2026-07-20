@@ -2,10 +2,14 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { PrismaService } from '../database/prisma.service';
 import { CreateProductDto, UpdateProductDto } from './dto/product.dto';
 import { product_status, variant_status, inventory_transaction_type, offer_status } from '@prisma/client';
+import { UploadFilesService } from '../uploads/upload-files.service';
 
 @Injectable()
 export class ProductsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private uploadFilesService: UploadFilesService,
+  ) {}
 
   async create(dto: CreateProductDto) {
     // Validate at least one product image is provided
@@ -62,6 +66,7 @@ export class ProductsService {
           data: dto.images.map((img) => ({
             product_id: product.id,
             image_url: img.image_url,
+            alt_text: img.alt_text,
             is_thumbnail: img.is_thumbnail || false,
             sort_order: img.sort_order || 0,
           })),
@@ -129,7 +134,8 @@ export class ProductsService {
           await tx.variant_images.createMany({
             data: variantDto.images.map((img, idx) => ({
               variant_id: variant.id,
-              image: img,
+              image: this.variantImageUrl(img),
+              alt_text: this.variantImageAltText(img),
               sort_order: idx,
             })),
           });
@@ -229,7 +235,11 @@ export class ProductsService {
   }
 
   async update(id: string, dto: UpdateProductDto) {
-    await this.findOne(id); // Check existence
+    const product = await this.findOne(id); // Check existence
+
+    if (dto.images && dto.images.length === 0) {
+      throw new BadRequestException('At least one product image is required');
+    }
 
     if (dto.slug) {
       const existing = await this.prisma.products.findFirst({
@@ -240,7 +250,8 @@ export class ProductsService {
       }
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const deletedImagePaths: string[] = [];
+    const updated = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.products.update({
         where: { id },
         data: {
@@ -272,35 +283,71 @@ export class ProductsService {
         }
       }
 
-      // Update/sync Images if provided
+      // Sync images without removing files that are still referenced.
       if (dto.images) {
-        // Delete existing images
-        await tx.product_images.deleteMany({ where: { product_id: id } });
-        // Add new ones
-        if (dto.images.length > 0) {
-          await tx.product_images.createMany({
-            data: dto.images.map((img) => ({
-              product_id: id,
-              image_url: img.image_url,
-              is_thumbnail: img.is_thumbnail || false,
-              sort_order: img.sort_order || 0,
-            })),
-          });
+        const existingIds = new Set(product.images.map((image) => image.id));
+        const submittedIds = dto.images.filter((image) => image.id).map((image) => image.id!);
+        if (submittedIds.some((imageId) => !existingIds.has(imageId))) {
+          throw new BadRequestException('One or more product images do not belong to this product');
+        }
+
+        const removed = product.images.filter((image) => !submittedIds.includes(image.id));
+        deletedImagePaths.push(...removed.map((image) => image.image_url));
+        if (removed.length > 0) {
+          await tx.product_images.deleteMany({ where: { id: { in: removed.map((image) => image.id) } } });
+        }
+
+        for (const [index, image] of dto.images.entries()) {
+          const imageData = {
+            image_url: image.image_url,
+            alt_text: image.alt_text,
+            is_thumbnail: image.is_thumbnail || false,
+            sort_order: image.sort_order ?? index,
+          };
+          if (image.id) {
+            await tx.product_images.update({ where: { id: image.id }, data: imageData });
+          } else {
+            await tx.product_images.create({ data: { product_id: id, ...imageData } });
+          }
         }
       }
 
       // Update/sync Variants if provided
       if (dto.variants) {
-        for (const varDto of dto.variants) {
-          const existingVar = await tx.product_variants.findFirst({
-            where: { sku: varDto.sku, product_id: id },
+        const existingVariantIds = new Set(product.variants.map((variant) => variant.id));
+        const submittedVariantIds = dto.variants.filter((variant) => variant.id).map((variant) => variant.id);
+        if (submittedVariantIds.some((variantId) => !existingVariantIds.has(variantId))) {
+          throw new BadRequestException('One or more variants do not belong to this product');
+        }
+
+        const omittedVariantIds = product.variants
+          .filter((variant) => !submittedVariantIds.includes(variant.id))
+          .map((variant) => variant.id);
+        if (omittedVariantIds.length > 0) {
+          await tx.product_variants.updateMany({
+            where: { id: { in: omittedVariantIds } },
+            data: { status: variant_status.INACTIVE },
           });
+        }
+
+        for (const varDto of dto.variants) {
+          const existingVar = varDto.id
+            ? await tx.product_variants.findFirst({ where: { id: varDto.id, product_id: id } })
+            : await tx.product_variants.findFirst({ where: { sku: varDto.sku, product_id: id } });
 
           if (existingVar) {
+            const skuConflict = await tx.product_variants.findFirst({
+              where: { sku: varDto.sku, id: { not: existingVar.id } },
+            });
+            if (skuConflict) {
+              throw new BadRequestException(`SKU ${varDto.sku} is already in use`);
+            }
+
             // Update existing variant
             await tx.product_variants.update({
               where: { id: existingVar.id },
               data: {
+                sku: varDto.sku,
                 barcode: varDto.barcode,
                 weight: varDto.weight,
                 price: varDto.price,
@@ -315,9 +362,10 @@ export class ProductsService {
               await tx.variant_images.deleteMany({ where: { variant_id: existingVar.id } });
               if (varDto.images.length > 0) {
                 await tx.variant_images.createMany({
-                  data: varDto.images.map((img: string, idx: number) => ({
+                  data: varDto.images.map((img: any, idx: number) => ({
                     variant_id: existingVar.id,
-                    image: img,
+                    image: this.variantImageUrl(img),
+                    alt_text: this.variantImageAltText(img),
                     sort_order: idx,
                   })),
                 });
@@ -449,12 +497,55 @@ export class ProductsService {
                 },
               });
             }
+
+            if (varDto.images && varDto.images.length > 0) {
+              await tx.variant_images.createMany({
+                data: varDto.images.map((img: any, idx: number) => ({
+                  variant_id: newVar.id,
+                  image: this.variantImageUrl(img),
+                  alt_text: this.variantImageAltText(img),
+                  sort_order: idx,
+                })),
+              });
+            }
           }
         }
       }
 
       return updated;
     });
+
+    await Promise.all(deletedImagePaths.map((imageUrl) => this.removeUploadedProductImage(imageUrl)));
+    return updated;
+  }
+
+  async removeImage(productId: string, imageId: string) {
+    const image = await this.prisma.product_images.findFirst({
+      where: { id: imageId, product_id: productId },
+    });
+    if (!image) throw new NotFoundException('Product image not found');
+
+    const imageCount = await this.prisma.product_images.count({ where: { product_id: productId } });
+    if (imageCount <= 1) throw new BadRequestException('A product must have at least one image');
+
+    await this.prisma.product_images.delete({ where: { id: imageId } });
+    await this.removeUploadedProductImage(image.image_url);
+    return { id: imageId, deleted: true };
+  }
+
+  private async removeUploadedProductImage(imageUrl: string) {
+    const marker = '/uploads/product/';
+    const markerIndex = imageUrl.indexOf(marker);
+    if (markerIndex === -1) return;
+    await this.uploadFilesService.remove(imageUrl.slice(markerIndex + '/uploads'.length), 'product');
+  }
+
+  private variantImageUrl(image: string | { image_url?: string; image?: string }) {
+    return typeof image === 'string' ? image : image.image_url || image.image || '';
+  }
+
+  private variantImageAltText(image: string | { alt_text?: string }) {
+    return typeof image === 'string' ? undefined : image.alt_text;
   }
 
   async remove(id: string) {
@@ -717,6 +808,7 @@ export class ProductsService {
           compare_price_gbp: comparePriceGbp ? Number(comparePriceGbp.toFixed(2)) : null,
           available_stock: totalAvailable,
           images: v.images.map((img) => img.image),
+          image_objects: v.images.map((img) => ({ image_url: img.image, alt_text: (img as any).alt_text })),
           attributes: v.attributes.map((av) => ({
             name: av.attribute_value.attribute.name,
             value: av.attribute_value.value,
@@ -743,6 +835,7 @@ export class ProductsService {
         is_featured: prod.is_featured,
         thumbnail: prod.images.find((img) => img.is_thumbnail)?.image_url || prod.images[0]?.image_url || null,
         images: prod.images.map((img) => img.image_url),
+        image_objects: prod.images.map((img) => ({ image_url: img.image_url, alt_text: (img as any).alt_text })),
         categories: prod.product_categories.map((pc) => ({ id: pc.category.id, name: pc.category.name, slug: pc.category.slug })),
         min_price: minPrice,
         min_original_price: minOriginalPrice,
@@ -856,6 +949,7 @@ export class ProductsService {
         compare_price_gbp: comparePriceGbp ? Number(comparePriceGbp.toFixed(2)) : null,
         available_stock: totalAvailable,
         images: v.images.map((img) => img.image),
+        image_objects: v.images.map((img) => ({ image_url: img.image, alt_text: (img as any).alt_text })),
         attributes: v.attributes.map((av) => ({
           name: av.attribute_value.attribute.name,
           value: av.attribute_value.value,
@@ -883,6 +977,7 @@ export class ProductsService {
       seo_keywords: product.seo_keywords,
       thumbnail: product.images.find((img) => img.is_thumbnail)?.image_url || product.images[0]?.image_url || null,
       images: product.images.map((img) => img.image_url),
+      image_objects: product.images.map((img) => ({ image_url: img.image_url, alt_text: (img as any).alt_text })),
       categories: product.product_categories.map((pc) => ({ id: pc.category.id, name: pc.category.name, slug: pc.category.slug })),
       variants: mappedVariants,
       reviews: product.reviews.map((r) => ({

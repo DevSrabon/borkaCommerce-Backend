@@ -17,6 +17,10 @@ export class CreateCategoryDto {
   @IsOptional()
   image?: string;
 
+  @IsString()
+  @IsOptional()
+  image_alt_text?: string;
+
   @IsInt()
   @IsOptional()
   sort_order?: number;
@@ -46,6 +50,10 @@ export class UpdateCategoryDto {
   @IsString()
   @IsOptional()
   image?: string;
+
+  @IsString()
+  @IsOptional()
+  image_alt_text?: string;
 
   @IsInt()
   @IsOptional()

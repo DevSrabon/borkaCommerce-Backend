@@ -94,6 +94,10 @@ export class CategoriesService {
       if (updateCategoryDto.parent_id === id) {
         throw new BadRequestException('Category cannot be its own parent');
       }
+      const descendantIds = await this.getDescendantIds(id);
+      if (descendantIds.includes(updateCategoryDto.parent_id)) {
+        throw new BadRequestException('Category cannot be moved under one of its descendants');
+      }
       const parent = await this.prisma.categories.findUnique({
         where: { id: updateCategoryDto.parent_id },
       });
@@ -106,6 +110,15 @@ export class CategoriesService {
       where: { id },
       data: updateCategoryDto,
     });
+  }
+
+  private async getDescendantIds(id: string): Promise<string[]> {
+    const children = await this.prisma.categories.findMany({
+      where: { parent_id: id },
+      select: { id: true },
+    });
+    const nested = await Promise.all(children.map((child) => this.getDescendantIds(child.id)));
+    return [...children.map((child) => child.id), ...nested.flat()];
   }
 
   async remove(id: string) {

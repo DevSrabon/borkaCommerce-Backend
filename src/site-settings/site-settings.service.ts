@@ -24,6 +24,7 @@ export class SiteSettingsService {
     cta_text?: string;
     cta_link?: string;
     image_url: string;
+    alt_text?: string;
     is_active?: boolean;
     sort_order?: number;
   }) {
@@ -36,6 +37,7 @@ export class SiteSettingsService {
     cta_text: string;
     cta_link: string;
     image_url: string;
+    alt_text: string;
     is_active: boolean;
     sort_order: number;
   }>) {

@@ -3,9 +3,17 @@ import { Type } from 'class-transformer';
 import { product_status, variant_status } from '@prisma/client';
 
 export class ProductImageDto {
+  @IsUUID()
+  @IsOptional()
+  id?: string;
+
   @IsString()
   @IsNotEmpty()
   image_url: string;
+
+  @IsString()
+  @IsOptional()
+  alt_text?: string;
 
   @IsBoolean()
   @IsOptional()
@@ -27,6 +35,10 @@ export class VariantAttributeDto {
 }
 
 export class CreateVariantDto {
+  @IsUUID()
+  @IsOptional()
+  id?: string;
+
   @IsString()
   @IsNotEmpty()
   sku: string;
@@ -62,9 +74,8 @@ export class CreateVariantDto {
   attributes?: VariantAttributeDto[];
 
   @IsArray()
-  @IsString({ each: true })
   @IsOptional()
-  images?: string[];
+  images?: (string | ProductImageDto)[];
 
   @IsNumber()
   @IsNotEmpty()
@@ -188,4 +199,3 @@ export class UpdateProductDto {
   @IsOptional()
   variants?: any[];
 }
-

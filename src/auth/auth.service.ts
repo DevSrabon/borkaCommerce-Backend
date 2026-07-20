@@ -66,17 +66,17 @@ export class AuthService {
 
     // Generate session token (using random UUID)
     const token = crypto.randomBytes(32).toString('hex');
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 30); // 30 days expiry
+    const expires_at = new Date();
+    expires_at.setDate(expires_at.getDate() + 30); // 30 days expiry
 
     // Save session in database
     const session = await this.prisma.sessions.create({
       data: {
         token,
-        expiresAt,
-        customerId: customer.id,
-        createdAt: new Date(),
-        updatedAt: new Date(),
+        expires_at,
+        customer_id: customer.id,
+        created_at: new Date(),
+        updated_at: new Date(),
       },
     });
 

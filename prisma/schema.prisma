@@ -90,6 +90,7 @@ model categories {
   slug        String    @unique
   description String?
   image       String?
+  image_alt_text String?
   sort_order  Int       @default(0)
   is_active   Boolean   @default(true)
   created_at  DateTime  @default(now())
@@ -139,6 +140,7 @@ model product_images {
   product_id   String
   product      products @relation(fields: [product_id], references: [id], onDelete: Cascade)
   image_url    String
+  alt_text     String?
   sort_order   Int      @default(0)
   is_thumbnail Boolean  @default(false)
 }
@@ -200,6 +202,7 @@ model variant_images {
   variant_id String
   variant    product_variants @relation(fields: [variant_id], references: [id], onDelete: Cascade)
   image      String
+  alt_text   String?
   sort_order Int              @default(0)
 }
 
@@ -297,32 +300,32 @@ model customers {
 // Better-Auth Session
 model sessions {
   id           String   @id @default(uuid())
-  expiresAt    DateTime
+  expires_at   DateTime
   token        String   @unique
-  createdAt    DateTime
-  updatedAt    DateTime
-  ipAddress    String?
-  userAgent    String?
-  customerId   String
-  customer     customers @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  created_at   DateTime
+  updated_at   DateTime
+  ip_address   String?
+  user_agent   String?
+  customer_id  String
+  customer     customers @relation(fields: [customer_id], references: [id], onDelete: Cascade)
 }
 
 // Better-Auth Account
 model accounts {
-  id                    String    @id @default(uuid())
-  accountId             String
-  providerId            String
-  customerId            String
-  customer              customers  @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  accessToken           String?
-  refreshToken          String?
-  idToken               String?
-  accessTokenExpiresAt  DateTime?
-  refreshTokenExpiresAt DateTime?
-  scope                 String?
-  password              String?
-  createdAt             DateTime
-  updatedAt             DateTime
+  id                       String    @id @default(uuid())
+  account_id               String
+  provider_id              String
+  customer_id              String
+  customer                 customers @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+  access_token             String?
+  refresh_token            String?
+  id_token                 String?
+  access_token_expires_at  DateTime?
+  refresh_token_expires_at DateTime?
+  scope                    String?
+  password                 String?
+  created_at               DateTime
+  updated_at               DateTime
 }
 
 // 15. Customer Addresses
@@ -473,6 +476,7 @@ model banners {
   cta_text   String?
   cta_link   String?
   image_url  String
+  alt_text   String?
   is_active  Boolean  @default(true)
   sort_order Int      @default(0)
   created_at DateTime @default(now())

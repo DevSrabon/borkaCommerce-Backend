@@ -17,7 +17,7 @@ export class AuthGuard implements CanActivate {
       include: { customer: true },
     });
 
-    if (!session || new Date(session.expiresAt) < new Date()) {
+    if (!session || new Date(session.expires_at) < new Date()) {
       throw new UnauthorizedException('Invalid or expired session');
     }
 
