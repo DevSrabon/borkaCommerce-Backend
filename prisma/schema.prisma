@@ -1,0 +1,488 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum product_status {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum variant_status {
+  ACTIVE
+  INACTIVE
+  OUT_OF_STOCK
+}
+
+enum discount_type {
+  PERCENTAGE
+  FIXED_AMOUNT
+}
+
+enum offer_type {
+  FLASH_SALE
+  EID_SALE
+  BLACK_FRIDAY
+  RAMADAN_OFFER
+  GENERIC
+}
+
+enum offer_status {
+  ACTIVE
+  INACTIVE
+  EXPIRED
+}
+
+enum order_status {
+  PENDING
+  CONFIRMED
+  PACKED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+enum payment_status {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum payment_method {
+  STRIPE
+  CASH_ON_DELIVERY
+}
+
+enum refund_status {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+enum review_status {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum inventory_transaction_type {
+  PURCHASE
+  SALE
+  RETURN
+  MANUAL_ADJUSTMENT
+  TRANSFER
+}
+
+// 1. Categories (Recursive Tree)
+model categories {
+  id          String    @id @default(uuid())
+  parent_id   String?
+  parent      categories?  @relation("categories_to_categories", fields: [parent_id], references: [id])
+  children    categories[] @relation("categories_to_categories")
+  name        String
+  slug        String    @unique
+  description String?
+  image       String?
+  sort_order  Int       @default(0)
+  is_active   Boolean   @default(true)
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+
+  product_categories product_categories[]
+}
+
+// 2. Products
+model products {
+  id                String            @id @default(uuid())
+  name              String
+  slug              String            @unique
+  description       String
+  short_description String?
+  sku_prefix        String?
+  seo_title         String?
+  seo_description   String?
+  seo_keywords      String?
+  status            product_status    @default(DRAFT)
+  is_featured       Boolean           @default(false)
+  published_at      DateTime?
+  created_at        DateTime          @default(now())
+  updated_at        DateTime          @updatedAt
+  deleted_at        DateTime?
+
+  product_categories product_categories[]
+  images             product_images[]
+  variants           product_variants[]
+  reviews            reviews[]
+  wishlists          wishlists[]
+}
+
+// 3. Product Categories (Many-to-Many Join Table)
+model product_categories {
+  product_id  String
+  category_id String
+  product     products  @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  category    categories @relation(fields: [category_id], references: [id], onDelete: Cascade)
+
+  @@id([product_id, category_id])
+}
+
+// 4. Product Images
+model product_images {
+  id           String   @id @default(uuid())
+  product_id   String
+  product      products @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  image_url    String
+  sort_order   Int      @default(0)
+  is_thumbnail Boolean  @default(false)
+}
+
+// 5. Variant Attributes (e.g., Color, Size, Fabric)
+model attributes {
+  id     String             @id @default(uuid())
+  name   String             @unique
+  values attribute_values[]
+}
+
+model attribute_values {
+  id           String                     @id @default(uuid())
+  attribute_id String
+  attribute    attributes                 @relation(fields: [attribute_id], references: [id], onDelete: Cascade)
+  value        String
+  variants     variant_attribute_values[]
+
+  @@unique([attribute_id, value])
+}
+
+// 6. Product Variants
+model product_variants {
+  id            String                     @id @default(uuid())
+  product_id    String
+  product       products                   @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  sku           String                     @unique
+  barcode       String?                    @unique
+  weight        Float? // in grams/kgs
+  price         Decimal                    @db.Decimal(10, 2)
+  compare_price Decimal?                   @db.Decimal(10, 2)
+  cost_price    Decimal?                   @db.Decimal(10, 2)
+  status        variant_status             @default(ACTIVE)
+  created_at    DateTime                   @default(now())
+  updated_at    DateTime                   @updatedAt
+
+  attributes    variant_attribute_values[]
+  images        variant_images[]
+  inventories   inventory[]
+  offers        offer_products[]
+  cart_items    cart_items[]
+  order_items   order_items[]
+  transactions  inventory_transactions[]
+}
+
+// 7. Variant Attribute Mapping (Many-to-Many Join Table)
+model variant_attribute_values {
+  variant_id         String
+  attribute_value_id String
+  variant            product_variants @relation(fields: [variant_id], references: [id], onDelete: Cascade)
+  attribute_value    attribute_values @relation(fields: [attribute_value_id], references: [id], onDelete: Cascade)
+
+  @@id([variant_id, attribute_value_id])
+}
+
+// 8. Variant Images
+model variant_images {
+  id         String           @id @default(uuid())
+  variant_id String
+  variant    product_variants @relation(fields: [variant_id], references: [id], onDelete: Cascade)
+  image      String
+  sort_order Int              @default(0)
+}
+
+// 9. Warehouses
+model warehouses {
+  id           String                 @id @default(uuid())
+  name         String
+  location     String
+  inventories  inventory[]
+  transactions inventory_transactions[]
+}
+
+// 10. Inventory
+model inventory {
+  id                 String           @id @default(uuid())
+  variant_id         String
+  variant            product_variants @relation(fields: [variant_id], references: [id], onDelete: Cascade)
+  warehouse_id       String
+  warehouse          warehouses       @relation(fields: [warehouse_id], references: [id], onDelete: Cascade)
+  quantity           Int              @default(0)
+  reserved_quantity  Int              @default(0)
+  available_quantity Int              @default(0)
+  updated_at         DateTime         @updatedAt
+
+  @@unique([variant_id, warehouse_id])
+}
+
+// 11. Offers
+model offers {
+  id             String           @id @default(uuid())
+  name           String
+  type           offer_type       @default(GENERIC)
+  priority       Int              @default(0) // Higher number = higher priority
+  discount_type  discount_type
+  discount_value Decimal          @db.Decimal(10, 2)
+  start_date     DateTime
+  end_date       DateTime
+  status         offer_status     @default(ACTIVE)
+  created_at     DateTime         @default(now())
+  updated_at     DateTime         @updatedAt
+
+  products       offer_products[]
+}
+
+// 12. Offer Products
+model offer_products {
+  offer_id   String
+  variant_id String
+  offer      offers           @relation(fields: [offer_id], references: [id], onDelete: Cascade)
+  variant    product_variants @relation(fields: [variant_id], references: [id], onDelete: Cascade)
+
+  @@id([offer_id, variant_id])
+}
+
+// 13. Coupons
+model coupons {
+  id                 String        @id @default(uuid())
+  code               String        @unique
+  type               String        @default("discount")
+  discount_type      discount_type
+  discount_value     Decimal       @db.Decimal(10, 2)
+  minimum_amount     Decimal?      @db.Decimal(10, 2)
+  maximum_discount   Decimal?      @db.Decimal(10, 2)
+  usage_limit        Int?
+  usage_per_customer Int           @default(1)
+  start_date         DateTime
+  end_date           DateTime
+  status             Boolean       @default(true)
+  created_at         DateTime      @default(now())
+  updated_at         DateTime      @updatedAt
+  orders             orders[]
+}
+
+// 14. Customers & Better-Auth System Models
+model customers {
+  id             String             @id @default(uuid())
+  first_name     String
+  last_name      String
+  email          String             @unique
+  phone          String?
+  password       String?
+  email_verified Boolean            @default(false)
+  created_at     DateTime           @default(now())
+  updated_at     DateTime           @updatedAt
+
+  addresses      customer_addresses[]
+  carts          carts[]
+  orders         orders[]
+  reviews        reviews[]
+  wishlists      wishlists[]
+  sessions       sessions[]
+  accounts       accounts[]
+}
+
+// Better-Auth Session
+model sessions {
+  id           String   @id @default(uuid())
+  expiresAt    DateTime
+  token        String   @unique
+  createdAt    DateTime
+  updatedAt    DateTime
+  ipAddress    String?
+  userAgent    String?
+  customerId   String
+  customer     customers @relation(fields: [customerId], references: [id], onDelete: Cascade)
+}
+
+// Better-Auth Account
+model accounts {
+  id                    String    @id @default(uuid())
+  accountId             String
+  providerId            String
+  customerId            String
+  customer              customers  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime
+  updatedAt             DateTime
+}
+
+// 15. Customer Addresses
+model customer_addresses {
+  id          String    @id @default(uuid())
+  customer_id String
+  customer    customers @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+  country     String
+  city        String
+  area        String
+  street      String
+  building    String?
+  postal_code String?
+  is_default  Boolean   @default(false)
+}
+
+// 16. Cart
+model carts {
+  id          String      @id @default(uuid())
+  customer_id String
+  customer    customers   @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+  created_at  DateTime    @default(now())
+  updated_at  DateTime    @updatedAt
+  items       cart_items[]
+}
+
+model cart_items {
+  id         String           @id @default(uuid())
+  cart_id    String
+  cart       carts            @relation(fields: [cart_id], references: [id], onDelete: Cascade)
+  variant_id String
+  variant    product_variants @relation(fields: [variant_id], references: [id], onDelete: Cascade)
+  quantity   Int              @default(1)
+
+  @@unique([cart_id, variant_id])
+}
+
+// 17. Orders
+model orders {
+  id             String         @id @default(uuid())
+  order_number   String         @unique
+  customer_id    String
+  customer       customers      @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+  status         order_status   @default(PENDING)
+  subtotal       Decimal        @db.Decimal(10, 2)
+  discount       Decimal        @default(0) @db.Decimal(10, 2)
+  shipping       Decimal        @db.Decimal(10, 2)
+  tax            Decimal        @db.Decimal(10, 2)
+  total          Decimal        @db.Decimal(10, 2)
+  currency       String         @default("AED")
+  payment_status payment_status @default(PENDING)
+  payment_method payment_method @default(STRIPE)
+  coupon_id      String?
+  coupon         coupons?       @relation(fields: [coupon_id], references: [id])
+  created_at     DateTime       @default(now())
+  updated_at     DateTime       @updatedAt
+
+  items          order_items[]
+  payments       payments[]
+}
+
+// 18. Order Items (Snapshot table)
+model order_items {
+  id           String           @id @default(uuid())
+  order_id     String
+  order        orders           @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  variant_id   String
+  variant      product_variants @relation(fields: [variant_id], references: [id])
+  product_name String
+  variant_name String
+  sku          String
+  price        Decimal          @db.Decimal(10, 2)
+  quantity     Int
+  discount     Decimal          @default(0) @db.Decimal(10, 2)
+  subtotal     Decimal          @db.Decimal(10, 2)
+}
+
+// 19. Payments (Stripe)
+model payments {
+  id                      String         @id @default(uuid())
+  order_id                String
+  order                   orders         @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  provider                String         @default("STRIPE")
+  provider_payment_intent String?
+  provider_charge_id      String?
+  amount                  Decimal        @db.Decimal(10, 2)
+  currency                String         @default("AED")
+  status                  payment_status @default(PENDING)
+  paid_at                 DateTime?
+  response_json           Json?
+  refunds                 refunds[]
+}
+
+// 20. Refunds
+model refunds {
+  id               String       @id @default(uuid())
+  payment_id       String
+  payment          payments     @relation(fields: [payment_id], references: [id], onDelete: Cascade)
+  amount           Decimal      @db.Decimal(10, 2)
+  reason           String?
+  stripe_refund_id String?
+  status           refund_status @default(PENDING)
+  created_at       DateTime     @default(now())
+}
+
+// 21. Reviews
+model reviews {
+  id          String       @id @default(uuid())
+  product_id  String
+  product     products     @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  customer_id String
+  customer    customers    @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+  rating      Int
+  review      String?
+  status      review_status @default(PENDING)
+  created_at  DateTime     @default(now())
+}
+
+// 22. Wishlist
+model wishlists {
+  customer_id String
+  product_id  String
+  customer    customers @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+  product     products  @relation(fields: [product_id], references: [id], onDelete: Cascade)
+
+  @@id([customer_id, product_id])
+}
+
+// 23. Inventory Transactions (Audit Log)
+model inventory_transactions {
+  id             String                    @id @default(uuid())
+  variant_id     String
+  variant        product_variants          @relation(fields: [variant_id], references: [id], onDelete: Cascade)
+  warehouse_id   String
+  warehouse      warehouses                @relation(fields: [warehouse_id], references: [id], onDelete: Cascade)
+  type           inventory_transaction_type
+  quantity       Int
+  reference_type String?
+  reference_id   String?
+  created_at     DateTime                  @default(now())
+}
+
+// 24. Homepage Banners (Admin-managed)
+model banners {
+  id         String   @id @default(uuid())
+  title      String
+  subtitle   String?
+  cta_text   String?
+  cta_link   String?
+  image_url  String
+  is_active  Boolean  @default(true)
+  sort_order Int      @default(0)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+}
+
+// 25. Site Settings (Key-Value store for SEO, branding)
+model site_settings {
+  id         String   @id @default(uuid())
+  key        String   @unique
+  value      String
+  updated_at DateTime @updatedAt
+}
