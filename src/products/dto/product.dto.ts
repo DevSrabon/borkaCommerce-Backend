@@ -131,6 +131,15 @@ export class CreateProductDto {
   @IsUUID(undefined, { each: true })
   category_ids: string[];
 
+  @IsString()
+  @IsOptional()
+  tags?: string;
+
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  @IsOptional()
+  related_category_ids?: string[];
+
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => ProductImageDto)
@@ -188,6 +197,15 @@ export class UpdateProductDto {
   @IsUUID(undefined, { each: true })
   @IsOptional()
   category_ids?: string[];
+
+  @IsString()
+  @IsOptional()
+  tags?: string;
+
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  @IsOptional()
+  related_category_ids?: string[];
 
   @IsArray()
   @ValidateNested({ each: true })

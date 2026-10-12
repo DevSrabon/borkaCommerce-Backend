@@ -37,6 +37,7 @@ export class ProductsService {
           seo_title: dto.seo_title,
           seo_description: dto.seo_description,
           seo_keywords: dto.seo_keywords,
+          tags: dto.tags,
           status: dto.status || product_status.DRAFT,
           is_featured: dto.is_featured || false,
         },
@@ -54,6 +55,23 @@ export class ProductsService {
 
         await tx.product_categories.createMany({
           data: dto.category_ids.map((catId) => ({
+            product_id: product.id,
+            category_id: catId,
+          })),
+        });
+      }
+
+      // 2b. Link Related Categories
+      if (dto.related_category_ids && dto.related_category_ids.length > 0) {
+        const relatedCats = await tx.categories.findMany({
+          where: { id: { in: dto.related_category_ids } },
+        });
+        if (relatedCats.length !== dto.related_category_ids.length) {
+          throw new NotFoundException('One or more related categories do not exist');
+        }
+
+        await tx.product_related_categories.createMany({
+          data: dto.related_category_ids.map((catId) => ({
             product_id: product.id,
             category_id: catId,
           })),
@@ -186,6 +204,9 @@ export class ProductsService {
         product_categories: {
           include: { category: true },
         },
+        related_categories: {
+          include: { category: true },
+        },
         variants: {
           include: {
             inventories: {
@@ -204,6 +225,9 @@ export class ProductsService {
       where: { id, deleted_at: null },
       include: {
         product_categories: {
+          include: { category: true },
+        },
+        related_categories: {
           include: { category: true },
         },
         images: true,
@@ -263,6 +287,7 @@ export class ProductsService {
           seo_title: dto.seo_title,
           seo_description: dto.seo_description,
           seo_keywords: dto.seo_keywords,
+          tags: dto.tags,
           status: dto.status,
           is_featured: dto.is_featured,
         },
@@ -276,6 +301,21 @@ export class ProductsService {
         if (dto.category_ids.length > 0) {
           await tx.product_categories.createMany({
             data: dto.category_ids.map((catId) => ({
+              product_id: id,
+              category_id: catId,
+            })),
+          });
+        }
+      }
+
+      if (dto.related_category_ids) {
+        // Delete old related category linkages
+        await tx.product_related_categories.deleteMany({ where: { product_id: id } });
+
+        // Add new related category linkages
+        if (dto.related_category_ids.length > 0) {
+          await tx.product_related_categories.createMany({
+            data: dto.related_category_ids.map((catId) => ({
               product_id: id,
               category_id: catId,
             })),
@@ -706,6 +746,7 @@ export class ProductsService {
         { name: { contains: search, mode: 'insensitive' } },
         { description: { contains: search, mode: 'insensitive' } },
         { seo_keywords: { contains: search, mode: 'insensitive' } },
+        { tags: { contains: search, mode: 'insensitive' } },
       ];
     }
 
@@ -743,8 +784,25 @@ export class ProductsService {
 
     const now = new Date();
 
+    const activeCategoryOffers = await this.prisma.offers.findMany({
+      where: {
+        status: offer_status.ACTIVE,
+        start_date: { lte: now },
+        end_date: { gte: now },
+        categories: { some: {} },
+      },
+      include: {
+        categories: true,
+      },
+    });
+
     // Map each product to append dynamic pricing based on active offers
     return products.map((prod) => {
+      const productCategoryIds = prod.product_categories.map((pc) => pc.category_id);
+      const activeCatOffersForProduct = activeCategoryOffers.filter((offer) =>
+        offer.categories.some((oc) => productCategoryIds.includes(oc.category_id))
+      );
+
       const mappedVariants = prod.variants.map((v) => {
         // Find active offers for this variant
         const activeOffers = v.offers
@@ -755,6 +813,9 @@ export class ProductsService {
               new Date(o.start_date) <= now &&
               new Date(o.end_date) >= now,
           );
+
+        const allActiveOffers = [...activeOffers, ...activeCatOffersForProduct];
+        allActiveOffers.sort((a, b) => b.priority - a.priority);
 
         const basePrice = Number(v.price);
         const baseComparePrice = v.compare_price ? Number(v.compare_price) : null;
@@ -768,16 +829,15 @@ export class ProductsService {
         let finalPriceUsd = priceUsd;
         let finalPriceGbp = priceGbp;
 
-        if (activeOffers.length > 0) {
-          // Sort offers to find the highest priority one
-          activeOffers.sort((a, b) => b.priority - a.priority);
-          const topOffer = activeOffers[0];
+        if (allActiveOffers.length > 0) {
+          const topOffer = allActiveOffers[0];
           offerApplied = {
             id: topOffer.id,
             name: topOffer.name,
             type: topOffer.type,
             discount_type: topOffer.discount_type,
             discount_value: Number(topOffer.discount_value),
+            end_date: topOffer.end_date, // Expose end_date for countdown timer
           };
 
           // Compute discounted price
@@ -851,6 +911,9 @@ export class ProductsService {
         product_categories: {
           include: { category: true },
         },
+        related_categories: {
+          include: { category: true },
+        },
         images: {
           orderBy: { sort_order: 'asc' },
         },
@@ -889,6 +952,23 @@ export class ProductsService {
 
     const now = new Date();
 
+    const activeCategoryOffers = await this.prisma.offers.findMany({
+      where: {
+        status: offer_status.ACTIVE,
+        start_date: { lte: now },
+        end_date: { gte: now },
+        categories: { some: {} },
+      },
+      include: {
+        categories: true,
+      },
+    });
+
+    const productCategoryIds = product.product_categories.map((pc) => pc.category_id);
+    const activeCatOffersForProduct = activeCategoryOffers.filter((offer) =>
+      offer.categories.some((oc) => productCategoryIds.includes(oc.category_id))
+    );
+
     // Map single product details and variants
     const mappedVariants = product.variants.map((v) => {
       const activeOffers = v.offers
@@ -899,6 +979,9 @@ export class ProductsService {
             new Date(o.start_date) <= now &&
             new Date(o.end_date) >= now,
         );
+
+      const allActiveOffers = [...activeOffers, ...activeCatOffersForProduct];
+      allActiveOffers.sort((a, b) => b.priority - a.priority);
 
       const basePrice = Number(v.price);
       const baseComparePrice = v.compare_price ? Number(v.compare_price) : null;
@@ -912,15 +995,15 @@ export class ProductsService {
       let finalPriceUsd = priceUsd;
       let finalPriceGbp = priceGbp;
 
-      if (activeOffers.length > 0) {
-        activeOffers.sort((a, b) => b.priority - a.priority);
-        const topOffer = activeOffers[0];
+      if (allActiveOffers.length > 0) {
+        const topOffer = allActiveOffers[0];
         offerApplied = {
           id: topOffer.id,
           name: topOffer.name,
           type: topOffer.type,
           discount_type: topOffer.discount_type,
           discount_value: Number(topOffer.discount_value),
+          end_date: topOffer.end_date, // Expose end_date for countdown timer
         };
 
         if (topOffer.discount_type === 'PERCENTAGE') {
@@ -961,6 +1044,136 @@ export class ProductsService {
       };
     });
 
+    // Fetch related products based on product_related_categories
+    const relatedCategoryIds = product.related_categories.map((rc) => rc.category_id);
+    let relatedProducts: any[] = [];
+    if (relatedCategoryIds.length > 0) {
+      const rawRelated = await this.prisma.products.findMany({
+        where: {
+          id: { not: product.id },
+          deleted_at: null,
+          status: product_status.PUBLISHED,
+          product_categories: {
+            some: { category_id: { in: relatedCategoryIds } },
+          },
+        },
+        include: {
+          product_categories: { include: { category: true } },
+          images: { orderBy: { sort_order: 'asc' } },
+          variants: {
+            where: { status: variant_status.ACTIVE },
+            include: {
+              images: { orderBy: { sort_order: 'asc' } },
+              inventories: true,
+              attributes: { include: { attribute_value: { include: { attribute: true } } } },
+              offers: { include: { offer: true } },
+            },
+          },
+        },
+        take: 4,
+      });
+
+      relatedProducts = rawRelated.map((prod) => {
+        const prodCatIds = prod.product_categories.map((pc) => pc.category_id);
+        const prodCatOffers = activeCategoryOffers.filter((offer) =>
+          offer.categories.some((oc) => prodCatIds.includes(oc.category_id))
+        );
+
+        const mappedVars = prod.variants.map((v) => {
+          const activeOffers = v.offers
+            .map((op) => op.offer)
+            .filter(
+              (o) =>
+                o.status === offer_status.ACTIVE &&
+                new Date(o.start_date) <= now &&
+                new Date(o.end_date) >= now,
+            );
+
+          const allActive = [...activeOffers, ...prodCatOffers];
+          allActive.sort((a, b) => b.priority - a.priority);
+
+          const basePrice = Number(v.price);
+          const baseComparePrice = v.compare_price ? Number(v.compare_price) : null;
+          const priceUsd = basePrice / 3.67;
+          const priceGbp = basePrice / 4.70;
+          const comparePriceUsd = baseComparePrice ? baseComparePrice / 3.67 : null;
+          const comparePriceGbp = baseComparePrice ? baseComparePrice / 4.70 : null;
+
+          let offerApplied: any = null;
+          let finalPrice = basePrice;
+          let finalPriceUsd = priceUsd;
+          let finalPriceGbp = priceGbp;
+
+          if (allActive.length > 0) {
+            const topOffer = allActive[0];
+            offerApplied = {
+              id: topOffer.id,
+              name: topOffer.name,
+              type: topOffer.type,
+              discount_type: topOffer.discount_type,
+              discount_value: Number(topOffer.discount_value),
+              end_date: topOffer.end_date,
+            };
+
+            if (topOffer.discount_type === 'PERCENTAGE') {
+              finalPrice = finalPrice * (1 - Number(topOffer.discount_value) / 100);
+              finalPriceUsd = finalPriceUsd * (1 - Number(topOffer.discount_value) / 100);
+              finalPriceGbp = finalPriceGbp * (1 - Number(topOffer.discount_value) / 100);
+            } else {
+              finalPrice = Math.max(0, finalPrice - Number(topOffer.discount_value));
+              finalPriceUsd = Math.max(0, finalPriceUsd - Number(topOffer.discount_value) / 3.67);
+              finalPriceGbp = Math.max(0, finalPriceGbp - Number(topOffer.discount_value) / 4.70);
+            }
+          }
+
+          const totalAvailable = v.inventories.reduce((acc, inv) => acc + inv.available_quantity, 0);
+
+          return {
+            id: v.id,
+            sku: v.sku,
+            barcode: v.barcode,
+            weight: v.weight,
+            price: basePrice,
+            price_usd: Number(priceUsd.toFixed(2)),
+            price_gbp: Number(priceGbp.toFixed(2)),
+            compare_price: baseComparePrice,
+            compare_price_usd: comparePriceUsd ? Number(comparePriceUsd.toFixed(2)) : null,
+            compare_price_gbp: comparePriceGbp ? Number(comparePriceGbp.toFixed(2)) : null,
+            available_stock: totalAvailable,
+            images: v.images.map((img) => img.image),
+            attributes: v.attributes.map((av) => ({
+              name: av.attribute_value.attribute.name,
+              value: av.attribute_value.value,
+            })),
+            offer: offerApplied,
+            discounted_price: Number(finalPrice.toFixed(2)),
+            discounted_price_usd: Number(finalPriceUsd.toFixed(2)),
+            discounted_price_gbp: Number(finalPriceGbp.toFixed(2)),
+          };
+        });
+
+        const prices = mappedVars.map((v) => v.discounted_price);
+        const minPrice = prices.length > 0 ? Math.min(...prices) : 0;
+        const originalPrices = mappedVars.map((v) => v.price);
+        const minOriginalPrice = originalPrices.length > 0 ? Math.min(...originalPrices) : 0;
+
+        return {
+          id: prod.id,
+          name: prod.name,
+          slug: prod.slug,
+          description: prod.description,
+          short_description: prod.short_description,
+          is_featured: prod.is_featured,
+          thumbnail: prod.images.find((img) => img.is_thumbnail)?.image_url || prod.images[0]?.image_url || null,
+          images: prod.images.map((img) => img.image_url),
+          categories: prod.product_categories.map((pc) => ({ id: pc.category.id, name: pc.category.name, slug: pc.category.slug })),
+          min_price: minPrice,
+          min_original_price: minOriginalPrice,
+          variants: mappedVars,
+        };
+      });
+    }
+
     // Calculate average rating
     const averageRating = product.reviews.length > 0
       ? Number((product.reviews.reduce((acc, rev) => acc + rev.rating, 0) / product.reviews.length).toFixed(1))
@@ -975,11 +1188,14 @@ export class ProductsService {
       seo_title: product.seo_title,
       seo_description: product.seo_description,
       seo_keywords: product.seo_keywords,
+      tags: product.tags,
       thumbnail: product.images.find((img) => img.is_thumbnail)?.image_url || product.images[0]?.image_url || null,
       images: product.images.map((img) => img.image_url),
       image_objects: product.images.map((img) => ({ image_url: img.image_url, alt_text: (img as any).alt_text })),
       categories: product.product_categories.map((pc) => ({ id: pc.category.id, name: pc.category.name, slug: pc.category.slug })),
+      related_categories: product.related_categories.map((rc) => ({ id: rc.category.id, name: rc.category.name, slug: rc.category.slug })),
       variants: mappedVariants,
+      related_products: relatedProducts,
       reviews: product.reviews.map((r) => ({
         id: r.id,
         rating: r.rating,
@@ -994,3 +1210,4 @@ export class ProductsService {
     };
   }
 }
+

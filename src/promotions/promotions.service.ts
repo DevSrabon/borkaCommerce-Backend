@@ -40,6 +40,23 @@ export class PromotionsService {
         });
       }
 
+      if (dto.category_ids && dto.category_ids.length > 0) {
+        // Confirm categories exist
+        const categories = await tx.categories.findMany({
+          where: { id: { in: dto.category_ids } },
+        });
+        if (categories.length !== dto.category_ids.length) {
+          throw new NotFoundException('One or more category IDs are invalid');
+        }
+
+        await tx.offer_categories.createMany({
+          data: dto.category_ids.map((cId) => ({
+            offer_id: offer.id,
+            category_id: cId,
+          })),
+        });
+      }
+
       return offer;
     });
   }
@@ -53,6 +70,9 @@ export class PromotionsService {
               include: { product: true },
             },
           },
+        },
+        categories: {
+          include: { category: true },
         },
       },
       orderBy: { priority: 'desc' },

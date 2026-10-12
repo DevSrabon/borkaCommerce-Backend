@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
+import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import * as express from 'express';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -35,8 +36,19 @@ async function bootstrap() {
     credentials: true,
   });
 
+  // Configure Swagger API Documentation
+  const config = new DocumentBuilder()
+    .setTitle('BorkaCommerce API')
+    .setDescription('The BorkaCommerce eCommerce single-vendor API documentation')
+    .setVersion('1.0')
+    .addBearerAuth()
+    .build();
+  const document = SwaggerModule.createDocument(app, config);
+  SwaggerModule.setup('api/docs', app, document);
+
   const port = process.env.PORT ?? 3000;
   await app.listen(port);
   console.log(`Application is running on: http://localhost:${port}`);
 }
 bootstrap();
+

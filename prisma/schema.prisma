@@ -97,6 +97,8 @@ model categories {
   updated_at  DateTime  @updatedAt
 
   product_categories product_categories[]
+  offer_categories   offer_categories[]
+  related_products   product_related_categories[]
 }
 
 // 2. Products
@@ -110,6 +112,7 @@ model products {
   seo_title         String?
   seo_description   String?
   seo_keywords      String?
+  tags              String?
   status            product_status    @default(DRAFT)
   is_featured       Boolean           @default(false)
   published_at      DateTime?
@@ -118,6 +121,7 @@ model products {
   deleted_at        DateTime?
 
   product_categories product_categories[]
+  related_categories product_related_categories[]
   images             product_images[]
   variants           product_variants[]
   reviews            reviews[]
@@ -245,6 +249,7 @@ model offers {
   updated_at     DateTime         @updatedAt
 
   products       offer_products[]
+  categories     offer_categories[]
 }
 
 // 12. Offer Products
@@ -490,3 +495,24 @@ model site_settings {
   value      String
   updated_at DateTime @updatedAt
 }
+
+// 26. Offer Categories (Many-to-Many Join Table)
+model offer_categories {
+  offer_id    String
+  category_id String
+  offer       offers     @relation(fields: [offer_id], references: [id], onDelete: Cascade)
+  category    categories @relation(fields: [category_id], references: [id], onDelete: Cascade)
+
+  @@id([offer_id, category_id])
+}
+
+// 27. Product Related Categories (Many-to-Many Join Table)
+model product_related_categories {
+  product_id  String
+  category_id String
+  product     products   @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  category    categories @relation(fields: [category_id], references: [id], onDelete: Cascade)
+
+  @@id([product_id, category_id])
+}
+

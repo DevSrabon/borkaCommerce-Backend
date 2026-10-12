@@ -41,6 +41,11 @@ export class CreateOfferDto {
   @IsUUID(undefined, { each: true })
   @IsOptional()
   variant_ids?: string[];
+
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  @IsOptional()
+  category_ids?: string[];
 }
 
 export class CreateCouponDto {
