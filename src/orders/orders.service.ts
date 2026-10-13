@@ -466,6 +466,20 @@ export class OrdersService {
         customer: {
           select: { first_name: true, last_name: true, email: true },
         },
+        items: {
+          include: {
+            variant: {
+              include: {
+                images: true,
+                product: {
+                  include: {
+                    images: true,
+                  },
+                },
+              },
+            },
+          },
+        },
       },
       orderBy: { created_at: 'desc' },
     });
@@ -478,7 +492,14 @@ export class OrdersService {
         items: {
           include: {
             variant: {
-              include: { product: true },
+              include: {
+                images: true,
+                product: {
+                  include: {
+                    images: true,
+                  },
+                },
+              },
             },
           },
         },
@@ -503,7 +524,20 @@ export class OrdersService {
     return this.prisma.orders.findMany({
       where: { customer_id: customerId },
       include: {
-        items: true,
+        items: {
+          include: {
+            variant: {
+              include: {
+                images: true,
+                product: {
+                  include: {
+                    images: true,
+                  },
+                },
+              },
+            },
+          },
+        },
       },
       orderBy: { created_at: 'desc' },
     });

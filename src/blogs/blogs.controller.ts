@@ -47,6 +47,11 @@ export class BlogsController {
     return this.blogsService.getPopularBlogs(lim);
   }
 
+  @Get('blogs/categories')
+  async getCategories() {
+    return this.blogsService.getCategories();
+  }
+
   @Get('blogs/:slug')
   async getBlogBySlug(@Param('slug') slug: string) {
     return this.blogsService.getBlogBySlug(slug);
@@ -63,6 +68,24 @@ export class BlogsController {
   // ==========================================
   // ADMIN MANAGEMENT ENDPOINTS
   // ==========================================
+
+  @Get('admin/blogs/categories')
+  @UseGuards(AdminGuard)
+  async adminGetCategories() {
+    return this.blogsService.getCategories();
+  }
+
+  @Post('admin/blogs/categories')
+  @UseGuards(AdminGuard)
+  async adminAddCategory(@Body('name') name: string) {
+    return this.blogsService.addCategory(name);
+  }
+
+  @Delete('admin/blogs/categories/:name')
+  @UseGuards(AdminGuard)
+  async adminDeleteCategory(@Param('name') name: string) {
+    return this.blogsService.deleteCategory(name);
+  }
 
   @Get('admin/blogs')
   @UseGuards(AdminGuard)

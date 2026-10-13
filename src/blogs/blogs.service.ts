@@ -263,6 +263,73 @@ export class BlogsService implements OnModuleInit {
     };
   }
 
+  async getCategories(): Promise<string[]> {
+    // 1. Find all distinct categories from blogs
+    const blogCats = await this.prisma.blogs.findMany({
+      select: { category: true },
+      distinct: ['category'],
+    });
+
+    // 2. Find any custom categories from site_settings
+    const settingRow = await this.prisma.site_settings.findUnique({
+      where: { key: 'BLOG_CATEGORIES' },
+    });
+    let customCats: string[] = [];
+    if (settingRow?.value) {
+      try {
+        customCats = JSON.parse(settingRow.value);
+      } catch {
+        customCats = settingRow.value.split(',').map((s) => s.trim());
+      }
+    }
+
+    // 3. Merge with default categories
+    const defaultCats = ['Abaya', 'Bridal', 'Modest Fashion', 'Haute Couture', 'Styling Tips'];
+    const combined = new Set<string>();
+
+    [...defaultCats, ...customCats, ...blogCats.map((b) => b.category)].forEach((c) => {
+      if (c && c.trim()) {
+        combined.add(c.trim());
+      }
+    });
+
+    return Array.from(combined);
+  }
+
+  async addCategory(name: string): Promise<string[]> {
+    const trimmed = name?.trim();
+    if (!trimmed) {
+      throw new BadRequestException('Category name cannot be empty');
+    }
+
+    const categories = await this.getCategories();
+    if (!categories.some((c) => c.toLowerCase() === trimmed.toLowerCase())) {
+      categories.push(trimmed);
+    }
+
+    await this.prisma.site_settings.upsert({
+      where: { key: 'BLOG_CATEGORIES' },
+      update: { value: JSON.stringify(categories) },
+      create: { key: 'BLOG_CATEGORIES', value: JSON.stringify(categories) },
+    });
+
+    return categories;
+  }
+
+  async deleteCategory(name: string): Promise<string[]> {
+    const trimmed = name?.trim().toLowerCase();
+    let categories = await this.getCategories();
+    categories = categories.filter((c) => c.toLowerCase() !== trimmed);
+
+    await this.prisma.site_settings.upsert({
+      where: { key: 'BLOG_CATEGORIES' },
+      update: { value: JSON.stringify(categories) },
+      create: { key: 'BLOG_CATEGORIES', value: JSON.stringify(categories) },
+    });
+
+    return categories;
+  }
+
   // ==========================================
   // ADMIN MANAGEMENT METHODS
   // ==========================================
