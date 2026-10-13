@@ -872,19 +872,63 @@ export class OrdersService {
   }
 
   async getDeliveryPartners() {
-    return this.prisma.delivery_partners.findMany({
+    let partners = await this.prisma.delivery_partners.findMany({
       where: { is_active: true },
       orderBy: { name: 'asc' },
     });
+
+    if (partners.length === 0) {
+      const defaults = [
+        { name: 'Steadfast', tracking_url_template: 'https://steadfast.com.bd/t/{tracking_number}' },
+        { name: 'Aramex', tracking_url_template: 'https://www.aramex.com/track/results?shipmentNumber={tracking_number}' },
+        { name: 'DHL Express', tracking_url_template: 'https://www.dhl.com/en/express/tracking.html?AWB={tracking_number}' },
+        { name: 'FedEx', tracking_url_template: 'https://www.fedex.com/fedextrack/?trknbr={tracking_number}' },
+        { name: 'RedX', tracking_url_template: 'https://redx.com.bd/track/{tracking_number}' },
+        { name: 'Pathao', tracking_url_template: 'https://pathao.com/courier/tracking/?consignment_id={tracking_number}' },
+      ];
+      for (const d of defaults) {
+        try {
+          await this.prisma.delivery_partners.upsert({
+            where: { name: d.name },
+            update: {},
+            create: d,
+          });
+        } catch (_) {}
+      }
+      partners = await this.prisma.delivery_partners.findMany({
+        where: { is_active: true },
+        orderBy: { name: 'asc' },
+      });
+    }
+
+    return partners;
   }
 
   async createDeliveryPartner(dto: { name: string; tracking_url_template?: string; contact_phone?: string }) {
     if (!dto.name?.trim()) throw new BadRequestException('Partner name is required');
-    return this.prisma.delivery_partners.create({
-      data: {
+    return this.prisma.delivery_partners.upsert({
+      where: { name: dto.name.trim() },
+      update: {
+        tracking_url_template: dto.tracking_url_template?.trim() || null,
+        contact_phone: dto.contact_phone?.trim() || null,
+        is_active: true,
+      },
+      create: {
         name: dto.name.trim(),
         tracking_url_template: dto.tracking_url_template?.trim() || null,
         contact_phone: dto.contact_phone?.trim() || null,
+      },
+    });
+  }
+
+  async updateDeliveryPartner(id: string, dto: { name?: string; tracking_url_template?: string; contact_phone?: string; is_active?: boolean }) {
+    return this.prisma.delivery_partners.update({
+      where: { id },
+      data: {
+        ...(dto.name ? { name: dto.name.trim() } : {}),
+        ...(dto.tracking_url_template !== undefined ? { tracking_url_template: dto.tracking_url_template?.trim() || null } : {}),
+        ...(dto.contact_phone !== undefined ? { contact_phone: dto.contact_phone?.trim() || null } : {}),
+        ...(dto.is_active !== undefined ? { is_active: dto.is_active } : {}),
       },
     });
   }

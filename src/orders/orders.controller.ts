@@ -107,6 +107,15 @@ export class OrdersController {
   }
 
   @UseGuards(AdminGuard)
+  @Patch('admin/delivery-partners/:id')
+  updateDeliveryPartner(
+    @Param('id') id: string,
+    @Body() body: { name?: string; tracking_url_template?: string; contact_phone?: string; is_active?: boolean },
+  ) {
+    return this.ordersService.updateDeliveryPartner(id, body);
+  }
+
+  @UseGuards(AdminGuard)
   @Delete('admin/delivery-partners/:id')
   deleteDeliveryPartner(@Param('id') id: string) {
     return this.ordersService.deleteDeliveryPartner(id);
