@@ -109,6 +109,10 @@ export class CreateProductDto {
 
   @IsString()
   @IsOptional()
+  video_url?: string;
+
+  @IsString()
+  @IsOptional()
   seo_title?: string;
 
   @IsString()
@@ -176,6 +180,10 @@ export class UpdateProductDto {
   @IsString()
   @IsOptional()
   sku_prefix?: string;
+
+  @IsString()
+  @IsOptional()
+  video_url?: string;
 
   @IsString()
   @IsOptional()

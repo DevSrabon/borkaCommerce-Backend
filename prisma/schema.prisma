@@ -109,6 +109,7 @@ model products {
   description       String
   short_description String?
   sku_prefix        String?
+  video_url         String?
   seo_title         String?
   seo_description   String?
   seo_keywords      String?
