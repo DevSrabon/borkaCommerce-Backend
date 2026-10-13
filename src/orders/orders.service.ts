@@ -2,30 +2,48 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { PrismaService } from '../database/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { PromotionsService } from '../promotions/promotions.service';
-import { CheckoutDto, UpdateOrderStatusDto } from './dto/orders.dto';
+import { MailService } from '../mail/mail.service';
+import { CheckoutDto, UpdateOrderStatusDto, CreateManualOrderDto, UpdateOrderItemsDto } from './dto/orders.dto';
 import { order_status, payment_status, payment_method, inventory_transaction_type, offer_status } from '@prisma/client';
 import Stripe from 'stripe';
 
+import { SiteSettingsService } from '../site-settings/site-settings.service';
+
+export const CURRENCY_RATES: Record<string, number> = {
+  AED: 1,
+  USD: 1 / 3.67,
+  GBP: 1 / 4.70,
+  EUR: 1 / 4.00,
+  SAR: 1.02,
+  QAR: 0.99,
+  KWD: 1 / 12.00,
+  OMR: 1 / 9.53,
+  BHD: 1 / 9.74,
+};
+
 @Injectable()
 export class OrdersService {
-  private stripe: Stripe;
-
   constructor(
     private prisma: PrismaService,
     private configService: ConfigService,
     private promotionsService: PromotionsService,
-  ) {
-    const stripeKey = this.configService.get<string>('STRIPE_SECRET_KEY') || 'sk_test_mock';
-    this.stripe = new Stripe(stripeKey, {
-      apiVersion: '2025-01-27.accompany' as any, // Use standard stable fallback version or client choice
-    });
+    private mailService: MailService,
+    private siteSettingsService: SiteSettingsService,
+  ) {}
+
+  private async getStripeClient(): Promise<Stripe> {
+    const key =
+      (await this.siteSettingsService.getSetting('STRIPE_SECRET_KEY')) ||
+      this.configService.get<string>('STRIPE_SECRET_KEY') ||
+      'sk_test_mock';
+    return new Stripe(key);
   }
 
   async checkout(customerId: string, dto: CheckoutDto) {
     // Generate a unique order number (e.g. BC-YYYYMMDD-XXXX)
     const orderNumber = `BC-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       // 1. Resolve address
       const address = await tx.customer_addresses.findFirst({
         where: { id: dto.address_id, customer_id: customerId },
@@ -62,6 +80,13 @@ export class OrdersService {
         const totalAvailable = variant.inventories.reduce((acc, inv) => acc + inv.available_quantity, 0);
         if (totalAvailable < itemDto.quantity) {
           throw new BadRequestException(`Insufficient stock for product ${variant.product.name} (SKU: ${variant.sku})`);
+        }
+
+        // Validate product-wise COD eligibility
+        if (dto.payment_method === 'CASH_ON_DELIVERY' && variant.product.is_cod_allowed === false) {
+          throw new BadRequestException(
+            `Cash on Delivery is unavailable for "${variant.product.name}". Please choose online payment (Card).`
+          );
         }
 
         // Calculate dynamic variant price using highest priority offer
@@ -150,83 +175,154 @@ export class OrdersService {
         couponId = couponVal.coupon_id;
       }
 
-      // Calculations
-      const shipping = subtotal > 500 ? 0 : 20.00; // Free shipping over 500 AED
+      // Dynamic Shipping Charge calculation (evaluates free shipping & tiered discounts)
+      const shippingCalc = await this.siteSettingsService.calculateDeliveryCharge(subtotal);
+      const shipping = shippingCalc.final_fee;
       const tax = Number(((subtotal - discount) * 0.05).toFixed(2)); // 5% VAT in UAE
       const total = Number((subtotal - discount + shipping + tax).toFixed(2));
 
-      // 5. Create Order record
+      const isCod = dto.payment_method === 'CASH_ON_DELIVERY';
+
+      // Resolve user's selected dynamic currency and exchange rate
+      const selectedCurrency = (dto.currency || 'AED').toUpperCase();
+      const rate = CURRENCY_RATES[selectedCurrency] || 1;
+
+      // Converted financial amounts in customer's selected currency
+      const orderSubtotal = Number((subtotal * rate).toFixed(2));
+      const orderDiscount = Number((discount * rate).toFixed(2));
+      const orderShipping = Number((shipping * rate).toFixed(2));
+      const orderTax = Number((tax * rate).toFixed(2));
+      const orderTotal = Number((total * rate).toFixed(2));
+
+      // 5. Create Order record with dynamic currency
       const order = await tx.orders.create({
         data: {
           order_number: orderNumber,
           customer_id: customerId,
-          status: order_status.PENDING,
-          subtotal,
-          discount,
-          shipping,
-          tax,
-          total,
-          currency: 'AED',
+          status: isCod ? order_status.CONFIRMED : order_status.PENDING,
+          subtotal: orderSubtotal,
+          discount: orderDiscount,
+          shipping: orderShipping,
+          tax: orderTax,
+          total: orderTotal,
+          currency: selectedCurrency,
           payment_status: payment_status.PENDING,
-          payment_method: payment_method.STRIPE,
+          payment_method: isCod ? payment_method.CASH_ON_DELIVERY : payment_method.STRIPE,
           coupon_id: couponId,
         },
       });
 
-      // 6. Create Snapshot Order Items
+      // 6. Create Snapshot Order Items in selected currency
       await tx.order_items.createMany({
         data: orderItemsToCreate.map((item) => ({
           ...item,
+          price: Number((item.price * rate).toFixed(2)),
+          discount: Number((item.discount * rate).toFixed(2)),
+          subtotal: Number((item.subtotal * rate).toFixed(2)),
           order_id: order.id,
         })),
       });
 
-      // 7. Create Stripe PaymentIntent
+      // 7. Payment processing
       let clientSecret = '';
       let paymentIntentId = '';
 
-      try {
-        const paymentIntent = await this.stripe.paymentIntents.create({
-          amount: Math.round(total * 100), // convert fils to AED cents
-          currency: 'aed',
-          metadata: {
+      if (isCod) {
+        // Cash on delivery payment record
+        await tx.payments.create({
+          data: {
             order_id: order.id,
-            customer_id: customerId,
+            provider: 'CASH_ON_DELIVERY',
+            provider_payment_intent: `COD-${order.order_number}`,
+            amount: orderTotal,
+            currency: selectedCurrency,
+            status: payment_status.PENDING,
           },
         });
-        clientSecret = paymentIntent.client_secret || '';
-        paymentIntentId = paymentIntent.id;
-      } catch (stripeErr) {
-        throw new BadRequestException(`Stripe PaymentIntent generation failed: ${stripeErr.message}`);
-      }
+      } else {
+        // Stripe payment intent flow with DYNAMIC CURRENCY
+        try {
+          const stripeClient = await this.getStripeClient();
+          // Stripe expects amount in smallest currency unit (cents, fils, pence)
+          const stripeAmount = Math.max(50, Math.round(orderTotal * 100));
 
-      // 8. Create Payment Audit Record
-      await tx.payments.create({
-        data: {
-          order_id: order.id,
-          provider: 'STRIPE',
-          provider_payment_intent: paymentIntentId,
-          amount: total,
-          currency: 'AED',
-          status: payment_status.PENDING,
-        },
-      });
+          const paymentIntent = await stripeClient.paymentIntents.create({
+            amount: stripeAmount,
+            currency: selectedCurrency.toLowerCase(),
+            metadata: {
+              order_id: order.id,
+              customer_id: customerId,
+              selected_currency: selectedCurrency,
+              base_total_aed: total.toString(),
+              exchange_rate: rate.toString(),
+            },
+          });
+          clientSecret = paymentIntent.client_secret || '';
+          paymentIntentId = paymentIntent.id;
+        } catch (stripeErr: any) {
+          throw new BadRequestException(`Stripe PaymentIntent generation failed: ${stripeErr.message}`);
+        }
+
+        // Create Stripe Payment Audit Record in selected currency
+        await tx.payments.create({
+          data: {
+            order_id: order.id,
+            provider: 'STRIPE',
+            provider_payment_intent: paymentIntentId,
+            amount: orderTotal,
+            currency: selectedCurrency,
+            status: payment_status.PENDING,
+          },
+        });
+      }
 
       return {
         order_id: order.id,
         order_number: order.order_number,
         total: order.total,
+        currency: order.currency,
         client_secret: clientSecret,
+        payment_method: order.payment_method,
       };
     });
+
+    // Send asynchronous confirmation email to customer + new order alert to admin
+    try {
+      const fullOrder = await this.prisma.orders.findUnique({
+        where: { id: result.order_id },
+        include: {
+          customer: true,
+          items: true,
+        },
+      });
+
+      if (fullOrder && fullOrder.customer) {
+        await this.mailService.sendOrderConfirmation(
+          fullOrder.customer.email,
+          fullOrder.customer.first_name,
+          fullOrder,
+        );
+        await this.mailService.sendAdminNewOrderNotification(fullOrder);
+      }
+    } catch (err: any) {
+      // non-blocking
+    }
+
+    return result;
   }
 
   async handleStripeWebhook(payload: string, signature: string, secret: string) {
     let event: Stripe.Event;
 
     try {
-      event = this.stripe.webhooks.constructEvent(payload, signature, secret);
-    } catch (err) {
+      const stripeClient = await this.getStripeClient();
+      const webhookSecret =
+        secret ||
+        (await this.siteSettingsService.getSetting('STRIPE_WEBHOOK_SECRET')) ||
+        this.configService.get<string>('STRIPE_WEBHOOK_SECRET') ||
+        'whsec_mock';
+      event = stripeClient.webhooks.constructEvent(payload, signature, webhookSecret);
+    } catch (err: any) {
       throw new BadRequestException(`Webhook signature verification failed: ${err.message}`);
     }
 
@@ -386,7 +482,13 @@ export class OrdersService {
             },
           },
         },
-        customer: true,
+        customer: {
+          include: {
+            addresses: true,
+          },
+        },
+        payments: true,
+        coupon: true,
       },
     });
 
@@ -423,11 +525,36 @@ export class OrdersService {
       return this.findOne(id);
     }
 
-    return this.prisma.orders.update({
+    const dataToUpdate: any = {};
+    if (dto.status) dataToUpdate.status = dto.status;
+    if (dto.delivery_partner !== undefined) dataToUpdate.delivery_partner = dto.delivery_partner?.trim() || null;
+    if (dto.tracking_number !== undefined) dataToUpdate.tracking_number = dto.tracking_number?.trim() || null;
+    if (dto.tracking_url !== undefined) dataToUpdate.tracking_url = dto.tracking_url?.trim() || null;
+    if (dto.delivery_notes !== undefined) dataToUpdate.delivery_notes = dto.delivery_notes?.trim() || null;
+
+    const updated = await this.prisma.orders.update({
       where: { id },
-      data: { status: dto.status },
-      include: { items: true },
+      data: dataToUpdate,
+      include: { items: true, customer: true },
     });
+
+    if (dto.notify_customer && updated.customer && dto.status) {
+      try {
+        await this.mailService.sendOrderStatusUpdateEmail(
+          updated.customer.email,
+          updated.customer.first_name,
+          updated.order_number,
+          updated.status,
+          updated.delivery_partner || undefined,
+          updated.tracking_number || undefined,
+          updated.tracking_url || undefined,
+        );
+      } catch (err: any) {
+        // non-blocking
+      }
+    }
+
+    return updated;
   }
 
   async remove(id: string) {
@@ -440,5 +567,329 @@ export class OrdersService {
     return this.prisma.orders.delete({
       where: { id },
     });
+  }
+
+  /**
+   * Admin: Create manual order on behalf of a customer or guest
+   */
+  async createManualOrder(dto: CreateManualOrderDto) {
+    if (!dto.items || dto.items.length === 0) {
+      throw new BadRequestException('Order must contain at least one item');
+    }
+
+    const orderNumber = `BC-MANUAL-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Resolve or create customer
+      let customerId = dto.customer_id;
+      if (!customerId) {
+        const email = dto.customer_email?.trim() || `manual_${Date.now()}@sabaalwadi.ae`;
+        const existing = await tx.customers.findUnique({
+          where: { email },
+        });
+
+        if (existing) {
+          customerId = existing.id;
+        } else {
+          const newCustomer = await tx.customers.create({
+            data: {
+              first_name: dto.customer_first_name?.trim() || 'Manual',
+              last_name: dto.customer_last_name?.trim() || 'Customer',
+              email,
+              phone: dto.customer_phone?.trim() || undefined,
+              role: 'CUSTOMER',
+              email_verified: true,
+            },
+          });
+          customerId = newCustomer.id;
+        }
+      }
+
+      // 2. If address provided, create customer_address record
+      if (dto.address && customerId) {
+        await tx.customer_addresses.create({
+          data: {
+            customer_id: customerId,
+            street: dto.address.street || 'Manual Order Address',
+            city: dto.address.city || 'Dubai',
+            area: dto.address.state || 'Dubai Central',
+            country: dto.address.country || 'UAE',
+            postal_code: dto.address.postal_code || '00000',
+            is_default: false,
+          },
+        }).catch(() => {});
+      }
+
+      // 3. Process items and adjust inventory
+      let subtotal = 0;
+      const orderItemsToCreate: any[] = [];
+
+      for (const itemDto of dto.items) {
+        const variant = await tx.product_variants.findUnique({
+          where: { id: itemDto.variant_id },
+          include: {
+            product: true,
+            inventories: true,
+          },
+        });
+
+        if (!variant) {
+          throw new NotFoundException(`Product variant with ID ${itemDto.variant_id} not found`);
+        }
+
+        const price = itemDto.price !== undefined ? Number(itemDto.price) : Number(variant.price);
+        const itemSubtotal = price * itemDto.quantity;
+        subtotal += itemSubtotal;
+
+        // Deduct inventory
+        let remainingToDeduct = itemDto.quantity;
+        for (const inv of variant.inventories) {
+          if (remainingToDeduct <= 0) break;
+          const toDeduct = Math.min(inv.available_quantity, remainingToDeduct);
+          if (toDeduct > 0) {
+            await tx.inventory.update({
+              where: { id: inv.id },
+              data: {
+                available_quantity: { decrement: toDeduct },
+              },
+            });
+            remainingToDeduct -= toDeduct;
+          }
+        }
+
+        orderItemsToCreate.push({
+          variant_id: variant.id,
+          product_name: variant.product.name,
+          variant_name: variant.sku,
+          sku: variant.sku,
+          price,
+          quantity: itemDto.quantity,
+          discount: 0,
+          subtotal: itemSubtotal,
+        });
+      }
+
+      const shipping = Number(dto.delivery_charge ?? 0);
+      const discount = Number(dto.discount ?? 0);
+      const tax = 0;
+      const total = Math.max(0, subtotal + shipping - discount);
+
+      // 4. Create Order
+      const order = await tx.orders.create({
+        data: {
+          order_number: orderNumber,
+          customer_id: customerId,
+          status: (dto.status as order_status) || order_status.CONFIRMED,
+          subtotal,
+          discount,
+          shipping,
+          tax,
+          total,
+          currency: dto.currency || 'AED',
+          payment_status: (dto.payment_status as payment_status) || payment_status.PENDING,
+          payment_method: (dto.payment_method as payment_method) || payment_method.CASH_ON_DELIVERY,
+          delivery_partner: dto.delivery_partner || null,
+          tracking_number: dto.tracking_number || null,
+          tracking_url: dto.tracking_url || null,
+          delivery_notes: dto.delivery_notes || null,
+          items: {
+            create: orderItemsToCreate,
+          },
+        },
+        include: {
+          customer: true,
+          items: true,
+        },
+      });
+
+      // 5. If payment is paid, create payment record
+      if (order.payment_status === payment_status.PAID) {
+        await tx.payments.create({
+          data: {
+            order_id: order.id,
+            provider: String(order.payment_method),
+            amount: total,
+            currency: order.currency,
+            status: payment_status.PAID,
+            paid_at: new Date(),
+          },
+        }).catch(() => {});
+      }
+
+      return order;
+    });
+  }
+
+  /**
+   * Admin: Add/remove items and increase/decrease quantity of existing order
+   */
+  async updateOrderItems(id: string, dto: UpdateOrderItemsDto) {
+    if (!dto.items || dto.items.length === 0) {
+      throw new BadRequestException('Order must contain at least one item');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const order = await tx.orders.findUnique({
+        where: { id },
+        include: { items: true },
+      });
+
+      if (!order) {
+        throw new NotFoundException(`Order with ID ${id} not found`);
+      }
+
+      // Map old quantities
+      const oldQuantities = new Map<string, number>();
+      for (const item of order.items) {
+        oldQuantities.set(item.variant_id, (oldQuantities.get(item.variant_id) || 0) + item.quantity);
+      }
+
+      // Map new quantities
+      const newQuantities = new Map<string, number>();
+      for (const item of dto.items) {
+        newQuantities.set(item.variant_id, (newQuantities.get(item.variant_id) || 0) + item.quantity);
+      }
+
+      // Adjust inventory based on delta
+      const allVariantIds = new Set([...oldQuantities.keys(), ...newQuantities.keys()]);
+      for (const variantId of allVariantIds) {
+        const oldQty = oldQuantities.get(variantId) || 0;
+        const newQty = newQuantities.get(variantId) || 0;
+        const delta = newQty - oldQty; // positive = added more, negative = removed
+
+        if (delta > 0) {
+          // Deduct delta from available stock
+          const inventories = await tx.inventory.findMany({ where: { variant_id: variantId } });
+          let remainingToDeduct = delta;
+          for (const inv of inventories) {
+            if (remainingToDeduct <= 0) break;
+            const toDeduct = Math.min(inv.available_quantity, remainingToDeduct);
+            if (toDeduct > 0) {
+              await tx.inventory.update({
+                where: { id: inv.id },
+                data: { available_quantity: { decrement: toDeduct } },
+              });
+              remainingToDeduct -= toDeduct;
+            }
+          }
+        } else if (delta < 0) {
+          // Restore stock
+          const toRestore = Math.abs(delta);
+          const firstInv = await tx.inventory.findFirst({ where: { variant_id: variantId } });
+          if (firstInv) {
+            await tx.inventory.update({
+              where: { id: firstInv.id },
+              data: { available_quantity: { increment: toRestore } },
+            });
+          }
+        }
+      }
+
+      // Rebuild order_items
+      await tx.order_items.deleteMany({ where: { order_id: id } });
+
+      let subtotal = 0;
+      const newItemsToCreate: any[] = [];
+
+      for (const itemDto of dto.items) {
+        const variant = await tx.product_variants.findUnique({
+          where: { id: itemDto.variant_id },
+          include: { product: true },
+        });
+
+        if (!variant) {
+          throw new NotFoundException(`Variant ${itemDto.variant_id} not found`);
+        }
+
+        const price = itemDto.price !== undefined ? Number(itemDto.price) : Number(variant.price);
+        const itemSubtotal = price * itemDto.quantity;
+        subtotal += itemSubtotal;
+
+        newItemsToCreate.push({
+          variant_id: variant.id,
+          product_name: variant.product.name,
+          variant_name: variant.sku,
+          sku: variant.sku,
+          price,
+          quantity: itemDto.quantity,
+          discount: 0,
+          subtotal: itemSubtotal,
+        });
+      }
+
+      const shipping = dto.shipping !== undefined ? Number(dto.shipping) : Number(order.shipping);
+      const discount = dto.discount !== undefined ? Number(dto.discount) : Number(order.discount);
+      const total = Math.max(0, subtotal + shipping - discount);
+
+      // Update Order
+      const updatedOrder = await tx.orders.update({
+        where: { id },
+        data: {
+          subtotal,
+          shipping,
+          discount,
+          total,
+          items: {
+            create: newItemsToCreate,
+          },
+        },
+        include: {
+          items: {
+            include: {
+              variant: {
+                include: { product: true },
+              },
+            },
+          },
+          customer: {
+            include: { addresses: true },
+          },
+          payments: true,
+        },
+      });
+
+      return updatedOrder;
+    });
+  }
+
+  async onModuleInit() {
+    try {
+      const count = await this.prisma.delivery_partners.count();
+      if (count === 0) {
+        await this.prisma.delivery_partners.createMany({
+          data: [
+            { name: 'Aramex', tracking_url_template: 'https://www.aramex.com/track/results?shipmentNumber={tracking_number}' },
+            { name: 'DHL Express', tracking_url_template: 'https://www.dhl.com/en/express/tracking.html?AWB={tracking_number}' },
+            { name: 'Fetchr', tracking_url_template: 'https://track.fetchr.us/?tracking_numbers={tracking_number}' },
+            { name: 'Emirates Post', tracking_url_template: 'https://www.emiratespost.ae/track?trackNum={tracking_number}' },
+            { name: 'RedX', tracking_url_template: 'https://redx.com.bd/track?trackingId={tracking_number}' },
+            { name: 'Steadfast', tracking_url_template: 'https://steadfast.com.bd/t/{tracking_number}' },
+            { name: 'Pathao', tracking_url_template: 'https://merchant.pathao.com/tracking?consignment_id={tracking_number}' },
+          ],
+        });
+      }
+    } catch (_) {}
+  }
+
+  async getDeliveryPartners() {
+    return this.prisma.delivery_partners.findMany({
+      where: { is_active: true },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  async createDeliveryPartner(dto: { name: string; tracking_url_template?: string; contact_phone?: string }) {
+    if (!dto.name?.trim()) throw new BadRequestException('Partner name is required');
+    return this.prisma.delivery_partners.create({
+      data: {
+        name: dto.name.trim(),
+        tracking_url_template: dto.tracking_url_template?.trim() || null,
+        contact_phone: dto.contact_phone?.trim() || null,
+      },
+    });
+  }
+
+  async deleteDeliveryPartner(id: string) {
+    return this.prisma.delivery_partners.delete({ where: { id } });
   }
 }

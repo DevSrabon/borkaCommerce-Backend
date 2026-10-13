@@ -3,10 +3,11 @@ import { ProductsService } from './products.service';
 
 describe('ProductsService product requirements', () => {
   const uploadFiles = { remove: jest.fn() };
+  const mailService = { sendProductStatusUpdateEmail: jest.fn() };
 
   it('rejects a product without an image before creating database records', async () => {
     const prisma = { products: { findUnique: jest.fn() } };
-    const service = new ProductsService(prisma as any, uploadFiles as any);
+    const service = new ProductsService(prisma as any, uploadFiles as any, mailService as any);
 
     await expect(service.create({ images: [], variants: [] } as any)).rejects.toBeInstanceOf(BadRequestException);
     expect(prisma.products.findUnique).not.toHaveBeenCalled();
@@ -22,7 +23,7 @@ describe('ProductsService product requirements', () => {
       products: { findUnique: jest.fn().mockResolvedValue(null) },
       $transaction: jest.fn((callback) => callback(tx)),
     };
-    const service = new ProductsService(prisma as any, uploadFiles as any);
+    const service = new ProductsService(prisma as any, uploadFiles as any, mailService as any);
 
     await service.create({
       name: 'Abaya', slug: 'abaya', description: '<p>Luxury abaya</p>',

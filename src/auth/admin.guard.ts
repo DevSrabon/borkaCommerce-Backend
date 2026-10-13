@@ -4,8 +4,8 @@ import { PrismaService } from '../database/prisma.service';
 
 @Injectable()
 export class AdminGuard extends AuthGuard {
-  constructor(prisma: PrismaService) {
-    super(prisma);
+  constructor(private readonly prismaService: PrismaService) {
+    super(prismaService);
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -22,11 +22,14 @@ export class AdminGuard extends AuthGuard {
       throw new UnauthorizedException('User not authenticated');
     }
 
-    // 2. Check if user email matches admin list configured in env or defaults
-    const adminEmailsEnv = process.env.ADMIN_EMAILS || 'admin@example.com,srabon@example.com';
+    // 2. Check if user has role ADMIN or matches dynamic admin email list
+    const dbAdminRow = await this.prismaService.site_settings.findUnique({ where: { key: 'ADMIN_EMAILS' } });
+    const adminEmailsEnv = dbAdminRow?.value || process.env.ADMIN_EMAILS || 'admin@example.com,srabon@example.com';
     const adminEmails = adminEmailsEnv.split(',').map((email) => email.trim().toLowerCase());
 
-    if (!adminEmails.includes(user.email.toLowerCase())) {
+    const isAdmin = user.role === 'ADMIN' || adminEmails.includes(user.email.toLowerCase());
+
+    if (!isAdmin) {
       throw new ForbiddenException('Admin privilege required to perform this action');
     }
 

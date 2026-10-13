@@ -3,12 +3,14 @@ import { PrismaService } from '../database/prisma.service';
 import { CreateProductDto, UpdateProductDto } from './dto/product.dto';
 import { product_status, variant_status, inventory_transaction_type, offer_status } from '@prisma/client';
 import { UploadFilesService } from '../uploads/upload-files.service';
+import { MailService } from '../mail/mail.service';
 
 @Injectable()
 export class ProductsService {
   constructor(
     private prisma: PrismaService,
     private uploadFilesService: UploadFilesService,
+    private mailService: MailService,
   ) {}
 
   async create(dto: CreateProductDto) {
@@ -40,6 +42,7 @@ export class ProductsService {
           tags: dto.tags,
           status: dto.status || product_status.DRAFT,
           is_featured: dto.is_featured || false,
+          is_cod_allowed: dto.is_cod_allowed !== undefined ? dto.is_cod_allowed : true,
         },
       });
 
@@ -198,7 +201,7 @@ export class ProductsService {
   }
 
   async findAllAdmin() {
-    return this.prisma.products.findMany({
+    const products = await this.prisma.products.findMany({
       where: { deleted_at: null },
       include: {
         product_categories: {
@@ -215,8 +218,30 @@ export class ProductsService {
           },
         },
         images: true,
+        reviews: {
+          select: {
+            rating: true,
+          },
+        },
       },
       orderBy: { created_at: 'desc' },
+    });
+
+    return products.map((p) => {
+      const reviewList = p.reviews || [];
+      const reviewCount = reviewList.length;
+      const avgRating =
+        reviewCount > 0
+          ? Number((reviewList.reduce((acc, r) => acc + r.rating, 0) / reviewCount).toFixed(1))
+          : 0;
+
+      return {
+        ...p,
+        rating: {
+          average: avgRating,
+          count: reviewCount,
+        },
+      };
     });
   }
 
@@ -290,6 +315,7 @@ export class ProductsService {
           tags: dto.tags,
           status: dto.status,
           is_featured: dto.is_featured,
+          is_cod_allowed: dto.is_cod_allowed,
         },
       });
 
@@ -556,6 +582,18 @@ export class ProductsService {
     });
 
     await Promise.all(deletedImagePaths.map((imageUrl) => this.removeUploadedProductImage(imageUrl)));
+
+    if (dto.notify_customers && updated) {
+      try {
+        await this.mailService.sendProductStatusUpdateEmail(
+          updated.name,
+          dto.status || updated.status,
+        );
+      } catch (err: any) {
+        // non-blocking
+      }
+    }
+
     return updated;
   }
 
@@ -724,7 +762,7 @@ export class ProductsService {
 
   // --- STOREFRONT METHODS ---
 
-  async findAllStorefront(categoryId?: string, isFeatured?: boolean, search?: string) {
+  async findAllStorefront(categoryId?: string, isFeatured?: boolean, search?: string, onSale?: boolean) {
     const whereClause: any = {
       status: product_status.PUBLISHED,
       deleted_at: null,
@@ -797,7 +835,7 @@ export class ProductsService {
     });
 
     // Map each product to append dynamic pricing based on active offers
-    return products.map((prod) => {
+    const mappedProducts = products.map((prod) => {
       const productCategoryIds = prod.product_categories.map((pc) => pc.category_id);
       const activeCatOffersForProduct = activeCategoryOffers.filter((offer) =>
         offer.categories.some((oc) => productCategoryIds.includes(oc.category_id))
@@ -885,6 +923,12 @@ export class ProductsService {
       const minPrice = prices.length > 0 ? Math.min(...prices) : 0;
       const originalPrices = mappedVariants.map((v) => v.price);
       const minOriginalPrice = originalPrices.length > 0 ? Math.min(...originalPrices) : 0;
+      const isDiscounted = minOriginalPrice > minPrice;
+      const discountPercentage = isDiscounted
+        ? Math.round(((minOriginalPrice - minPrice) / minOriginalPrice) * 100)
+        : 0;
+
+      const activeOffer = mappedVariants.find((v) => v.offer)?.offer?.name || null;
 
       return {
         id: prod.id,
@@ -899,9 +943,18 @@ export class ProductsService {
         categories: prod.product_categories.map((pc) => ({ id: pc.category.id, name: pc.category.name, slug: pc.category.slug })),
         min_price: minPrice,
         min_original_price: minOriginalPrice,
+        on_sale: isDiscounted,
+        discount_percentage: discountPercentage,
+        active_offer_name: activeOffer,
         variants: mappedVariants,
       };
     });
+
+    if (onSale) {
+      return mappedProducts.filter((p) => p.on_sale);
+    }
+
+    return mappedProducts;
   }
 
   async findOneStorefront(slug: string) {

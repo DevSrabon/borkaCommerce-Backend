@@ -115,6 +115,7 @@ model products {
   tags              String?
   status            product_status    @default(DRAFT)
   is_featured       Boolean           @default(false)
+  is_cod_allowed    Boolean           @default(true)
   published_at      DateTime?
   created_at        DateTime          @default(now())
   updated_at        DateTime          @updatedAt
@@ -290,6 +291,11 @@ model customers {
   phone          String?
   password       String?
   email_verified Boolean            @default(false)
+  avatar_url     String?
+  otp_code       String?
+  otp_expires_at DateTime?
+  role           String             @default("CUSTOMER")
+  is_blocked     Boolean            @default(false)
   created_at     DateTime           @default(now())
   updated_at     DateTime           @updatedAt
 
@@ -300,6 +306,7 @@ model customers {
   wishlists      wishlists[]
   sessions       sessions[]
   accounts       accounts[]
+  chat_sessions  chat_sessions[]
 }
 
 // Better-Auth Session
@@ -385,6 +392,10 @@ model orders {
   payment_method payment_method @default(STRIPE)
   coupon_id      String?
   coupon         coupons?       @relation(fields: [coupon_id], references: [id])
+  delivery_partner String?
+  tracking_number  String?
+  tracking_url     String?
+  delivery_notes   String?
   created_at     DateTime       @default(now())
   updated_at     DateTime       @updatedAt
 
@@ -479,10 +490,12 @@ model banners {
   title      String
   subtitle   String?
   cta_text   String?
-  cta_link   String?
-  image_url  String
-  alt_text   String?
-  is_active  Boolean  @default(true)
+  cta_link         String?
+  image_url        String
+  alt_text         String?
+  size_type        String   @default("HERO") // HERO or SMALL
+  size_description String?  // e.g. "Desktop: 1920x800px | Mobile: 800x800px" or "Small promo card: 600x400px"
+  is_active        Boolean  @default(true)
   sort_order Int      @default(0)
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
@@ -514,5 +527,141 @@ model product_related_categories {
   category    categories @relation(fields: [category_id], references: [id], onDelete: Cascade)
 
   @@id([product_id, category_id])
+}
+
+// 28. Real-time Customer & Session Support Chat
+model chat_sessions {
+  id                    String          @id @default(uuid())
+  session_id            String          @unique
+  customer_id           String?
+  customer_name         String          @default("Guest Visitor")
+  customer_email        String?
+  ip_address            String?
+  status                String          @default("ACTIVE") // ACTIVE, RESOLVED, CLOSED
+  unread_admin_count    Int             @default(0)
+  unread_customer_count Int             @default(0)
+  is_customer_typing    Boolean         @default(false)
+  is_admin_typing       Boolean         @default(false)
+  last_message_at       DateTime        @default(now())
+  created_at            DateTime        @default(now())
+  updated_at            DateTime        @updatedAt
+
+  customer              customers?      @relation(fields: [customer_id], references: [id], onDelete: SetNull)
+  messages              chat_messages[]
+
+  @@index([session_id])
+  @@index([last_message_at])
+}
+
+model chat_messages {
+  id              String        @id @default(uuid())
+  session_id      String
+  sender_type     String        // 'CUSTOMER' | 'ADMIN' | 'BOT'
+  sender_name     String
+  message         String?       @default("") @db.Text
+  attachment_url  String?       @db.Text
+  attachment_type String?       // 'image' | 'file'
+  attachment_name String?
+  is_read         Boolean       @default(false)
+  created_at      DateTime      @default(now())
+
+  session         chat_sessions @relation(fields: [session_id], references: [session_id], onDelete: Cascade)
+
+  @@index([session_id])
+  @@index([created_at])
+}
+
+// 29. Dynamic CMS Pages (WordPress / Elementor-style Drag and Drop Page Builder)
+model pages {
+  id               String   @id @default(uuid())
+  title            String
+  slug             String   @unique
+  content          String?  @db.Text // JSON string containing ordered block array
+  html_cache       String?  @db.Text
+  meta_title       String?
+  meta_description String?
+  is_published     Boolean  @default(false)
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  @@index([slug])
+  @@index([is_published])
+}
+
+// 30. High-Performance System & Request Logs (Winston + Database)
+model system_logs {
+  id          String   @id @default(uuid())
+  level       String   @default("info") // 'info' | 'warn' | 'error'
+  method      String   // 'GET' | 'POST' | 'PATCH' | 'DELETE'
+  route       String   // Request path
+  status_code Int      // HTTP status code
+  duration_ms Float    // Response time in ms
+  ip          String?
+  query       String?  @db.Text // Query params
+  payload     String?  @db.Text // Sanitized request body
+  user_agent  String?  @db.Text
+  error_stack String?  @db.Text
+  created_at  DateTime @default(now())
+
+  @@index([created_at])
+  @@index([duration_ms])
+  @@index([status_code])
+  @@index([route])
+  @@index([method])
+}
+
+// 31. Blog Posts & Articles
+model blogs {
+  id             String          @id @default(uuid())
+  title          String
+  slug           String          @unique
+  excerpt        String?         @db.Text
+  content        String          @db.Text
+  featured_image String?         @db.Text
+  category       String          @default("Abaya")
+  author         String          @default("Saba Al Wadi")
+  views          Int             @default(0)
+  is_published   Boolean         @default(true)
+  published_at   DateTime        @default(now())
+  created_at     DateTime        @default(now())
+  updated_at     DateTime        @updatedAt
+
+  comments       blog_comments[]
+
+  @@index([slug])
+  @@index([category])
+  @@index([is_published])
+  @@index([views])
+  @@index([created_at])
+}
+
+// 32. Blog Comments & Moderation
+model blog_comments {
+  id           String   @id @default(uuid())
+  blog_id      String
+  blog         blogs    @relation(fields: [blog_id], references: [id], onDelete: Cascade)
+  author_name  String
+  author_email String
+  content      String   @db.Text
+  status       String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  @@index([blog_id])
+  @@index([status])
+  @@index([created_at])
+}
+
+// 33. Delivery Partners & Courier Services
+model delivery_partners {
+  id                    String    @id @default(uuid())
+  name                  String    @unique
+  tracking_url_template String?   // e.g. "https://www.aramex.com/track/results?shipmentNumber={tracking_number}"
+  contact_phone         String?
+  is_active             Boolean   @default(true)
+  created_at            DateTime  @default(now())
+  updated_at            DateTime  @updatedAt
+
+  @@index([is_active])
 }
 

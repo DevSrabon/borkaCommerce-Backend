@@ -12,7 +12,7 @@ export class UploadsController {
   @Get()
   async getMedia() {
     const uploadsRoot = join(process.cwd(), 'uploads');
-    const folders = ['product', 'customer', 'banner', 'category'];
+    const folders = ['product', 'customer', 'banner', 'category', 'blog'];
     const mediaList: { url: string; path: string; name: string; folder: string }[] = [];
 
     for (const folder of folders) {
@@ -47,7 +47,7 @@ export class UploadsController {
       storage: diskStorage({
         destination: (req, file, callback) => {
           const queryFolder = (req.query.folder as string) || 'product';
-          const allowed = ['product', 'customer', 'banner', 'category'];
+          const allowed = ['product', 'customer', 'banner', 'category', 'blog'];
           const folder = allowed.includes(queryFolder) ? queryFolder : 'product';
           const dest = join(process.cwd(), 'uploads', folder);
           if (!fs.existsSync(dest)) {

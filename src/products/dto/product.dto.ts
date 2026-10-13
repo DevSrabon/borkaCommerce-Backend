@@ -127,6 +127,10 @@ export class CreateProductDto {
   @IsOptional()
   is_featured?: boolean;
 
+  @IsBoolean()
+  @IsOptional()
+  is_cod_allowed?: boolean;
+
   @IsArray()
   @IsUUID(undefined, { each: true })
   category_ids: string[];
@@ -193,6 +197,10 @@ export class UpdateProductDto {
   @IsOptional()
   is_featured?: boolean;
 
+  @IsBoolean()
+  @IsOptional()
+  is_cod_allowed?: boolean;
+
   @IsArray()
   @IsUUID(undefined, { each: true })
   @IsOptional()
@@ -216,4 +224,9 @@ export class UpdateProductDto {
   @IsArray()
   @IsOptional()
   variants?: any[];
+
+  @IsBoolean()
+  @IsOptional()
+  notify_customers?: boolean;
 }
+

@@ -103,6 +103,33 @@ export class PromotionsService {
     });
   }
 
+  async findActivePromotions() {
+    const now = new Date();
+    const [offers, coupons] = await Promise.all([
+      this.prisma.offers.findMany({
+        where: {
+          status: 'ACTIVE',
+          start_date: { lte: now },
+          end_date: { gte: now },
+        },
+        include: {
+          categories: { include: { category: true } },
+          products: true,
+        },
+        orderBy: { priority: 'asc' },
+      }),
+      this.prisma.coupons.findMany({
+        where: {
+          status: true,
+          start_date: { lte: now },
+          end_date: { gte: now },
+        },
+        orderBy: { created_at: 'desc' },
+      }),
+    ]);
+    return { offers, coupons };
+  }
+
   async validateCoupon(dto: ValidateCouponDto, customerId?: string) {
     const code = dto.code.toUpperCase();
     const coupon = await this.prisma.coupons.findUnique({

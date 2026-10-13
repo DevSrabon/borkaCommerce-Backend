@@ -25,6 +25,10 @@ export class CheckoutDto {
   @IsOptional()
   currency?: string;
 
+  @IsString()
+  @IsOptional()
+  payment_method?: 'STRIPE' | 'CASH_ON_DELIVERY';
+
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => CheckoutItemDto)
@@ -33,6 +37,126 @@ export class CheckoutDto {
 
 export class UpdateOrderStatusDto {
   @IsEnum(order_status)
-  @IsNotEmpty()
-  status: order_status;
+  @IsOptional()
+  status?: order_status;
+
+  @IsOptional()
+  notify_customer?: boolean;
+
+  @IsString()
+  @IsOptional()
+  delivery_partner?: string;
+
+  @IsString()
+  @IsOptional()
+  tracking_number?: string;
+
+  @IsString()
+  @IsOptional()
+  tracking_url?: string;
+
+  @IsString()
+  @IsOptional()
+  delivery_notes?: string;
 }
+
+export class ManualOrderItemDto {
+  @IsString()
+  @IsNotEmpty()
+  variant_id: string;
+
+  @IsInt()
+  @IsNotEmpty()
+  quantity: number;
+
+  @IsOptional()
+  price?: number;
+}
+
+export class CreateManualOrderDto {
+  @IsOptional()
+  @IsString()
+  customer_id?: string;
+
+  @IsOptional()
+  @IsString()
+  customer_first_name?: string;
+
+  @IsOptional()
+  @IsString()
+  customer_last_name?: string;
+
+  @IsOptional()
+  @IsString()
+  customer_email?: string;
+
+  @IsOptional()
+  @IsString()
+  customer_phone?: string;
+
+  @IsOptional()
+  address?: {
+    street?: string;
+    city?: string;
+    state?: string;
+    postal_code?: string;
+    country?: string;
+  };
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ManualOrderItemDto)
+  items: ManualOrderItemDto[];
+
+  @IsOptional()
+  delivery_charge?: number;
+
+  @IsOptional()
+  discount?: number;
+
+  @IsOptional()
+  currency?: string;
+
+  @IsOptional()
+  payment_method?: string;
+
+  @IsOptional()
+  payment_status?: string;
+
+  @IsOptional()
+  status?: string;
+
+  @IsOptional()
+  notes?: string;
+
+  @IsOptional()
+  @IsString()
+  delivery_partner?: string;
+
+  @IsOptional()
+  @IsString()
+  tracking_number?: string;
+
+  @IsOptional()
+  @IsString()
+  tracking_url?: string;
+
+  @IsOptional()
+  @IsString()
+  delivery_notes?: string;
+}
+
+export class UpdateOrderItemsDto {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ManualOrderItemDto)
+  items: ManualOrderItemDto[];
+
+  @IsOptional()
+  shipping?: number;
+
+  @IsOptional()
+  discount?: number;
+}
+
+

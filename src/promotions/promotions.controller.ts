@@ -35,6 +35,10 @@ export class PromotionsController {
   }
 
   // --- STOREFRONT PROMOTION ROUTES ---
+  @Get('ecommerce/promotions/active')
+  findActivePromotions() {
+    return this.promotionsService.findActivePromotions();
+  }
 
   @UseGuards(AuthGuard)
   @Post('ecommerce/promotions/validate-coupon')

@@ -167,9 +167,11 @@ export class ProductsController {
     @Query('category_id') categoryId?: string,
     @Query('is_featured') isFeatured?: string,
     @Query('search') search?: string,
+    @Query('on_sale') onSale?: string,
   ) {
     const featured = isFeatured === 'true' ? true : isFeatured === 'false' ? false : undefined;
-    return this.productsService.findAllStorefront(categoryId, featured, search);
+    const saleOnly = onSale === 'true';
+    return this.productsService.findAllStorefront(categoryId, featured, search, saleOnly);
   }
 
   @Get('ecommerce/products/slug/:slug')

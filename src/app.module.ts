@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ConfigModule } from '@nestjs/config';
@@ -11,6 +11,14 @@ import { PromotionsModule } from './promotions/promotions.module';
 import { OrdersModule } from './orders/orders.module';
 import { AddressesModule } from './addresses/addresses.module';
 import { SiteSettingsModule } from './site-settings/site-settings.module';
+import { ReviewsModule } from './reviews/reviews.module';
+import { MailModule } from './mail/mail.module';
+import { ChatModule } from './chat/chat.module';
+import { PagesModule } from './pages/pages.module';
+import { LoggerModule } from './logger/logger.module';
+import { HttpLoggerMiddleware } from './logger/http-logger.middleware';
+
+import { BlogsModule } from './blogs/blogs.module';
 
 @Module({
   imports: [
@@ -19,6 +27,11 @@ import { SiteSettingsModule } from './site-settings/site-settings.module';
     }),
     DatabaseModule,
     AuthModule,
+    MailModule,
+    ChatModule,
+    PagesModule,
+    BlogsModule,
+    LoggerModule,
     CategoriesModule,
     ProductsModule,
     InventoryModule,
@@ -26,8 +39,13 @@ import { SiteSettingsModule } from './site-settings/site-settings.module';
     OrdersModule,
     AddressesModule,
     SiteSettingsModule,
+    ReviewsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(HttpLoggerMiddleware).forRoutes('*');
+  }
+}

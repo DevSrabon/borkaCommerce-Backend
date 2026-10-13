@@ -21,6 +21,10 @@ export class AuthGuard implements CanActivate {
       throw new UnauthorizedException('Invalid or expired session');
     }
 
+    if (session.customer?.is_blocked) {
+      throw new UnauthorizedException('Your account has been blocked by the administrator');
+    }
+
     request.user = session.customer;
     return true;
   }

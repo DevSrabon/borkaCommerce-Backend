@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Body, Patch, Param, UseGuards, Req, Headers, BadRequestException, Delete } from '@nestjs/common';
 import { OrdersService } from './orders.service';
-import { CheckoutDto, UpdateOrderStatusDto } from './dto/orders.dto';
+import { CheckoutDto, UpdateOrderStatusDto, CreateManualOrderDto, UpdateOrderItemsDto } from './dto/orders.dto';
 import { AuthGuard } from '../auth/auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -58,6 +58,12 @@ export class OrdersController {
   }
 
   @UseGuards(AdminGuard)
+  @Post('admin/orders/manual')
+  createManualOrder(@Body() createManualOrderDto: CreateManualOrderDto) {
+    return this.ordersService.createManualOrder(createManualOrderDto);
+  }
+
+  @UseGuards(AdminGuard)
   @Get('admin/orders/:id')
   findOneAdmin(@Param('id') id: string) {
     return this.ordersService.findOne(id);
@@ -70,8 +76,39 @@ export class OrdersController {
   }
 
   @UseGuards(AdminGuard)
+  @Patch('admin/orders/:id/items')
+  updateOrderItems(@Param('id') id: string, @Body() updateOrderItemsDto: UpdateOrderItemsDto) {
+    return this.ordersService.updateOrderItems(id, updateOrderItemsDto);
+  }
+
+  @UseGuards(AdminGuard)
   @Delete('admin/orders/:id')
   removeOrder(@Param('id') id: string) {
     return this.ordersService.remove(id);
+  }
+
+  // --- DELIVERY PARTNERS / COURIERS ---
+
+  @Get('ecommerce/delivery-partners')
+  getDeliveryPartnersPublic() {
+    return this.ordersService.getDeliveryPartners();
+  }
+
+  @UseGuards(AdminGuard)
+  @Get('admin/delivery-partners')
+  getDeliveryPartnersAdmin() {
+    return this.ordersService.getDeliveryPartners();
+  }
+
+  @UseGuards(AdminGuard)
+  @Post('admin/delivery-partners')
+  createDeliveryPartner(@Body() body: { name: string; tracking_url_template?: string; contact_phone?: string }) {
+    return this.ordersService.createDeliveryPartner(body);
+  }
+
+  @UseGuards(AdminGuard)
+  @Delete('admin/delivery-partners/:id')
+  deleteDeliveryPartner(@Param('id') id: string) {
+    return this.ordersService.deleteDeliveryPartner(id);
   }
 }
