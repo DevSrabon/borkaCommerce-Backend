@@ -178,8 +178,8 @@ export class OrdersService {
       // Dynamic Shipping Charge calculation (evaluates free shipping & tiered discounts)
       const shippingCalc = await this.siteSettingsService.calculateDeliveryCharge(subtotal);
       const shipping = shippingCalc.final_fee;
-      const tax = Number(((subtotal - discount) * 0.05).toFixed(2)); // 5% VAT in UAE
-      const total = Number((subtotal - discount + shipping + tax).toFixed(2));
+      const tax = 0; // VAT removed per user request
+      const total = Number((subtotal - discount + shipping).toFixed(2));
 
       const isCod = dto.payment_method === 'CASH_ON_DELIVERY';
 
@@ -904,10 +904,6 @@ export class OrdersService {
 
     if (!order) {
       throw new NotFoundException(`Order with ID ${id} not found`);
-    }
-
-    if (order.status !== order_status.PENDING) {
-      throw new BadRequestException('Order address can only be changed before the order is confirmed (status must be PENDING).');
     }
 
     const dataToUpdate: any = {};

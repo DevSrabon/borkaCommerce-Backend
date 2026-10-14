@@ -831,17 +831,28 @@ export class ProductsService {
 
     const now = new Date();
 
-    const activeCategoryOffers = await this.prisma.offers.findMany({
-      where: {
-        status: offer_status.ACTIVE,
-        start_date: { lte: now },
-        end_date: { gte: now },
-        categories: { some: {} },
-      },
-      include: {
-        categories: true,
-      },
-    });
+    const [activeCategoryOffers, activeGlobalOffers] = await Promise.all([
+      this.prisma.offers.findMany({
+        where: {
+          status: offer_status.ACTIVE,
+          start_date: { lte: now },
+          end_date: { gte: now },
+          categories: { some: {} },
+        },
+        include: {
+          categories: true,
+        },
+      }),
+      this.prisma.offers.findMany({
+        where: {
+          status: offer_status.ACTIVE,
+          start_date: { lte: now },
+          end_date: { gte: now },
+          categories: { none: {} },
+          products: { none: {} },
+        },
+      }),
+    ]);
 
     // Map each product to append dynamic pricing based on active offers
     const mappedProducts = products.map((prod) => {
@@ -861,7 +872,7 @@ export class ProductsService {
               new Date(o.end_date) >= now,
           );
 
-        const allActiveOffers = [...activeOffers, ...activeCatOffersForProduct];
+        const allActiveOffers = [...activeOffers, ...activeCatOffersForProduct, ...activeGlobalOffers];
         allActiveOffers.sort((a, b) => b.priority - a.priority);
 
         const basePrice = Number(v.price);
@@ -1017,17 +1028,28 @@ export class ProductsService {
 
     const now = new Date();
 
-    const activeCategoryOffers = await this.prisma.offers.findMany({
-      where: {
-        status: offer_status.ACTIVE,
-        start_date: { lte: now },
-        end_date: { gte: now },
-        categories: { some: {} },
-      },
-      include: {
-        categories: true,
-      },
-    });
+    const [activeCategoryOffers, activeGlobalOffers] = await Promise.all([
+      this.prisma.offers.findMany({
+        where: {
+          status: offer_status.ACTIVE,
+          start_date: { lte: now },
+          end_date: { gte: now },
+          categories: { some: {} },
+        },
+        include: {
+          categories: true,
+        },
+      }),
+      this.prisma.offers.findMany({
+        where: {
+          status: offer_status.ACTIVE,
+          start_date: { lte: now },
+          end_date: { gte: now },
+          categories: { none: {} },
+          products: { none: {} },
+        },
+      }),
+    ]);
 
     const productCategoryIds = product.product_categories.map((pc) => pc.category_id);
     const activeCatOffersForProduct = activeCategoryOffers.filter((offer) =>
@@ -1045,7 +1067,7 @@ export class ProductsService {
             new Date(o.end_date) >= now,
         );
 
-      const allActiveOffers = [...activeOffers, ...activeCatOffersForProduct];
+      const allActiveOffers = [...activeOffers, ...activeCatOffersForProduct, ...activeGlobalOffers];
       allActiveOffers.sort((a, b) => b.priority - a.priority);
 
       const basePrice = Number(v.price);

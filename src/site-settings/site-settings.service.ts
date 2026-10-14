@@ -84,6 +84,32 @@ export class SiteSettingsService {
       'Suit No: M-104, 2nd Floor, Al Habtoor Building (Abu Hail Centre), Abu Hail, Deira-Dubai, P.O Box-67242',
     footer_address_3:
       'Suit No: M-16, 2nd Floor, Al Habtoor Building (Abu Hail Centre), Abu Hail, Deira-Dubai, P.O Box-67242',
+    footer_branches_json: JSON.stringify([
+      {
+        id: 'branch-1',
+        name: 'Abu Hail Main Showroom',
+        address: 'Suit No: M-49, 2nd Floor, Al Habtoor Building (Abu Hail Centre), Abu Hail, Deira-Dubai, P.O Box-67242',
+        phone: 'Tel: +971 55 642 4758',
+        email: 'abuhail@sabaalwadi.com',
+        hours: 'Sat-Thu: 09:00am-11:00pm | Fri: 04:00pm-10:00pm'
+      },
+      {
+        id: 'branch-2',
+        name: 'Abu Hail Second Suite',
+        address: 'Suit No: M-104, 2nd Floor, Al Habtoor Building (Abu Hail Centre), Abu Hail, Deira-Dubai, P.O Box-67242',
+        phone: 'Mob: +971 55 79 17 409',
+        email: 'deira@sabaalwadi.com',
+        hours: 'Sat-Thu: 09:00am-11:00pm'
+      },
+      {
+        id: 'branch-3',
+        name: 'Abu Hail Studio & Atelier',
+        address: 'Suit No: M-16, 2nd Floor, Al Habtoor Building (Abu Hail Centre), Abu Hail, Deira-Dubai, P.O Box-67242',
+        phone: 'Mob: +971 55 467 5285',
+        email: 'contact@sabaalwadi.com',
+        hours: 'Sat-Thu: 10:00am-10:00pm'
+      }
+    ]),
     social_facebook: 'https://facebook.com/sabaalwadi',
     social_instagram: 'https://instagram.com/sabaalwadi',
     social_youtube: 'https://youtube.com/@sabaalwadi',

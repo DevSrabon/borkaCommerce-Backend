@@ -34,18 +34,31 @@ export class ChatService {
 
   /**
    * Get presence information for a session
-   * Considers customer online if active within last 45 seconds
+   * Considers customer online ONLY if active customer activity was recorded in memory within last 45 seconds
    */
-  getCustomerPresence(sessionId: string, sessionUpdatedAt?: Date | string) {
+  getCustomerPresence(
+    sessionId: string,
+    fallbackLastCustomerMessageAt?: Date | string | null,
+    fallbackCreatedAt?: Date | string | null,
+  ) {
     const memoryTimestamp = this.customerActivityMap.get(sessionId);
-    const dbTimestamp = sessionUpdatedAt ? new Date(sessionUpdatedAt).getTime() : 0;
-    const lastActiveMs = memoryTimestamp || dbTimestamp || Date.now();
+    const now = Date.now();
 
-    // Online threshold: 45 seconds
-    const isOnline = Date.now() - lastActiveMs < 45000;
+    // Customer is ONLY online if memoryTimestamp exists and is less than 45 seconds old
+    const isOnline = Boolean(memoryTimestamp && now - memoryTimestamp < 45000);
+
+    let lastActiveIso: string | undefined;
+    if (memoryTimestamp) {
+      lastActiveIso = new Date(memoryTimestamp).toISOString();
+    } else if (fallbackLastCustomerMessageAt) {
+      lastActiveIso = new Date(fallbackLastCustomerMessageAt).toISOString();
+    } else if (fallbackCreatedAt) {
+      lastActiveIso = new Date(fallbackCreatedAt).toISOString();
+    }
+
     return {
       is_online: isOnline,
-      last_active_at: new Date(lastActiveMs).toISOString(),
+      last_active_at: lastActiveIso,
     };
   }
 
@@ -185,7 +198,14 @@ export class ChatService {
       throw new NotFoundException(`Chat session ${sessionId} not found`);
     }
 
-    const presence = this.getCustomerPresence(sessionId, session.updated_at);
+    const lastCustomerMsg = session.messages
+      ? [...session.messages].reverse().find((m) => m.sender_type === 'CUSTOMER')
+      : null;
+    const presence = this.getCustomerPresence(
+      sessionId,
+      lastCustomerMsg?.created_at,
+      session.created_at,
+    );
 
     return {
       ...session,
@@ -384,7 +404,8 @@ export class ChatService {
     });
 
     return sessions.map((s) => {
-      const presence = this.getCustomerPresence(s.session_id, s.updated_at);
+      const lastMsgDate = s.messages?.[0]?.created_at;
+      const presence = this.getCustomerPresence(s.session_id, lastMsgDate, s.created_at);
       return {
         ...s,
         is_online: presence.is_online,

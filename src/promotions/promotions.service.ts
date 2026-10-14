@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
-import { CreateOfferDto, CreateCouponDto, ValidateCouponDto } from './dto/promotions.dto';
+import { CreateOfferDto, UpdateOfferDto, CreateCouponDto, UpdateCouponDto, ValidateCouponDto } from './dto/promotions.dto';
 
 @Injectable()
 export class PromotionsService {
@@ -23,42 +23,122 @@ export class PromotionsService {
         },
       });
 
-      if (dto.variant_ids && dto.variant_ids.length > 0) {
+      // If specific products are selected, resolve all their variants
+      let finalVariantIds = [...(dto.variant_ids || [])];
+      if (dto.product_ids && dto.product_ids.length > 0 && dto.apply_to !== 'ALL') {
+        const prodVariants = await tx.product_variants.findMany({
+          where: { product_id: { in: dto.product_ids } },
+          select: { id: true },
+        });
+        finalVariantIds = Array.from(new Set([...finalVariantIds, ...prodVariants.map((v) => v.id)]));
+      }
+
+      if (dto.apply_to !== 'ALL' && finalVariantIds.length > 0) {
         // Confirm variants exist
         const variants = await tx.product_variants.findMany({
-          where: { id: { in: dto.variant_ids } },
+          where: { id: { in: finalVariantIds } },
         });
-        if (variants.length !== dto.variant_ids.length) {
-          throw new NotFoundException('One or more variant IDs are invalid');
-        }
 
         await tx.offer_products.createMany({
-          data: dto.variant_ids.map((vId) => ({
+          data: variants.map((v) => ({
             offer_id: offer.id,
-            variant_id: vId,
+            variant_id: v.id,
           })),
         });
       }
 
-      if (dto.category_ids && dto.category_ids.length > 0) {
-        // Confirm categories exist
+      if (dto.apply_to !== 'ALL' && dto.category_ids && dto.category_ids.length > 0) {
         const categories = await tx.categories.findMany({
           where: { id: { in: dto.category_ids } },
         });
-        if (categories.length !== dto.category_ids.length) {
-          throw new NotFoundException('One or more category IDs are invalid');
-        }
 
         await tx.offer_categories.createMany({
-          data: dto.category_ids.map((cId) => ({
+          data: categories.map((c) => ({
             offer_id: offer.id,
-            category_id: cId,
+            category_id: c.id,
           })),
         });
       }
 
       return offer;
     });
+  }
+
+  async updateOffer(id: string, dto: UpdateOfferDto) {
+    const existing = await this.prisma.offers.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundException(`Offer #${id} not found`);
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const updateData: any = {};
+      if (dto.name !== undefined) updateData.name = dto.name;
+      if (dto.type !== undefined) updateData.type = dto.type;
+      if (dto.priority !== undefined) updateData.priority = dto.priority;
+      if (dto.discount_type !== undefined) updateData.discount_type = dto.discount_type;
+      if (dto.discount_value !== undefined) updateData.discount_value = dto.discount_value;
+      if (dto.start_date !== undefined) updateData.start_date = dto.start_date;
+      if (dto.end_date !== undefined) updateData.end_date = dto.end_date;
+      if (dto.status !== undefined) updateData.status = dto.status;
+
+      const offer = await tx.offers.update({
+        where: { id },
+        data: updateData,
+      });
+
+      if (dto.apply_to === 'ALL') {
+        // Clear all linked specific products and categories
+        await tx.offer_products.deleteMany({ where: { offer_id: id } });
+        await tx.offer_categories.deleteMany({ where: { offer_id: id } });
+      } else {
+        // If product_ids or variant_ids provided
+        if (dto.product_ids !== undefined || dto.variant_ids !== undefined) {
+          let finalVariantIds = [...(dto.variant_ids || [])];
+          if (dto.product_ids && dto.product_ids.length > 0) {
+            const prodVariants = await tx.product_variants.findMany({
+              where: { product_id: { in: dto.product_ids } },
+              select: { id: true },
+            });
+            finalVariantIds = Array.from(new Set([...finalVariantIds, ...prodVariants.map((v) => v.id)]));
+          }
+
+          await tx.offer_products.deleteMany({ where: { offer_id: id } });
+          if (finalVariantIds.length > 0) {
+            await tx.offer_products.createMany({
+              data: finalVariantIds.map((vId) => ({
+                offer_id: id,
+                variant_id: vId,
+              })),
+            });
+          }
+        }
+
+        // If category_ids provided
+        if (dto.category_ids !== undefined) {
+          await tx.offer_categories.deleteMany({ where: { offer_id: id } });
+          if (dto.category_ids.length > 0) {
+            await tx.offer_categories.createMany({
+              data: dto.category_ids.map((cId) => ({
+                offer_id: id,
+                category_id: cId,
+              })),
+            });
+          }
+        }
+      }
+
+      return offer;
+    });
+  }
+
+  async deleteOffer(id: string) {
+    const existing = await this.prisma.offers.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundException(`Offer #${id} not found`);
+    }
+
+    await this.prisma.offers.delete({ where: { id } });
+    return { success: true, message: `Offer "${existing.name}" deleted successfully` };
   }
 
   async findAllOffers() {
@@ -95,6 +175,33 @@ export class PromotionsService {
         code: dto.code.toUpperCase(),
       },
     });
+  }
+
+  async updateCoupon(id: string, dto: UpdateCouponDto) {
+    const existing = await this.prisma.coupons.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundException(`Coupon #${id} not found`);
+    }
+
+    const data: any = { ...dto };
+    if (dto.code) {
+      data.code = dto.code.toUpperCase();
+    }
+
+    return this.prisma.coupons.update({
+      where: { id },
+      data,
+    });
+  }
+
+  async deleteCoupon(id: string) {
+    const existing = await this.prisma.coupons.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundException(`Coupon #${id} not found`);
+    }
+
+    await this.prisma.coupons.delete({ where: { id } });
+    return { success: true, message: `Coupon "${existing.code}" deleted successfully` };
   }
 
   async findAllCoupons() {

@@ -1,6 +1,6 @@
-import { Controller, Get, Post, Body, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, UseGuards, Req } from '@nestjs/common';
 import { PromotionsService } from './promotions.service';
-import { CreateOfferDto, CreateCouponDto, ValidateCouponDto } from './dto/promotions.dto';
+import { CreateOfferDto, UpdateOfferDto, CreateCouponDto, UpdateCouponDto, ValidateCouponDto } from './dto/promotions.dto';
 import { AdminGuard } from '../auth/admin.guard';
 import { AuthGuard } from '../auth/auth.guard';
 
@@ -23,6 +23,18 @@ export class PromotionsController {
   }
 
   @UseGuards(AdminGuard)
+  @Patch('admin/offers/:id')
+  updateOffer(@Param('id') id: string, @Body() updateOfferDto: UpdateOfferDto) {
+    return this.promotionsService.updateOffer(id, updateOfferDto);
+  }
+
+  @UseGuards(AdminGuard)
+  @Delete('admin/offers/:id')
+  deleteOffer(@Param('id') id: string) {
+    return this.promotionsService.deleteOffer(id);
+  }
+
+  @UseGuards(AdminGuard)
   @Post('admin/coupons')
   createCoupon(@Body() createCouponDto: CreateCouponDto) {
     return this.promotionsService.createCoupon(createCouponDto);
@@ -32,6 +44,18 @@ export class PromotionsController {
   @Get('admin/coupons')
   findAllCoupons() {
     return this.promotionsService.findAllCoupons();
+  }
+
+  @UseGuards(AdminGuard)
+  @Patch('admin/coupons/:id')
+  updateCoupon(@Param('id') id: string, @Body() updateCouponDto: UpdateCouponDto) {
+    return this.promotionsService.updateCoupon(id, updateCouponDto);
+  }
+
+  @UseGuards(AdminGuard)
+  @Delete('admin/coupons/:id')
+  deleteCoupon(@Param('id') id: string) {
+    return this.promotionsService.deleteCoupon(id);
   }
 
   // --- STOREFRONT PROMOTION ROUTES ---
