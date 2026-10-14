@@ -23,6 +23,10 @@ export class CreateBlogDto {
 
   @IsOptional()
   @IsString()
+  main_image?: string;
+
+  @IsOptional()
+  @IsString()
   category?: string;
 
   @IsOptional()
@@ -58,6 +62,10 @@ export class UpdateBlogDto {
   @IsOptional()
   @IsString()
   featured_image?: string;
+
+  @IsOptional()
+  @IsString()
+  main_image?: string;
 
   @IsOptional()
   @IsString()

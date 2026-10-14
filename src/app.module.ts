@@ -19,6 +19,7 @@ import { LoggerModule } from './logger/logger.module';
 import { HttpLoggerMiddleware } from './logger/http-logger.middleware';
 
 import { BlogsModule } from './blogs/blogs.module';
+import { RedisModule } from './redis/redis.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { BlogsModule } from './blogs/blogs.module';
     AddressesModule,
     SiteSettingsModule,
     ReviewsModule,
+    RedisModule,
   ],
   controllers: [AppController],
   providers: [AppService],

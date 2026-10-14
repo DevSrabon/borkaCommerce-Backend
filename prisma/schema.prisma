@@ -501,6 +501,7 @@ model banners {
   cta_text   String?
   cta_link         String?
   image_url        String
+  mobile_image_url String?
   alt_text         String?
   size_type        String   @default("HERO") // HERO or SMALL
   size_description String?  // e.g. "Desktop: 1920x800px | Mobile: 800x800px" or "Small promo card: 600x400px"
@@ -627,6 +628,7 @@ model blogs {
   excerpt        String?         @db.Text
   content        String          @db.Text
   featured_image String?         @db.Text
+  main_image     String?         @db.Text
   category       String          @default("Abaya")
   author         String          @default("Saba Al Wadi")
   views          Int             @default(0)

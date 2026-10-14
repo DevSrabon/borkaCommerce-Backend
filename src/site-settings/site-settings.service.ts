@@ -17,7 +17,6 @@ export class SiteSettingsService {
 
   // Default fallback values matching .env lines 4-23 & delivery configuration
   private readonly defaultSettings: Record<string, string> = {
-    REDIS_URL: process.env.REDIS_URL || '',
     STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY || '',
     STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET || 'whsec_mock',
     ADMIN_EMAILS: process.env.ADMIN_EMAILS || 'admin@example.com,srabon@example.com',
@@ -52,15 +51,33 @@ export class SiteSettingsService {
     shipping_discount_type: 'PERCENTAGE', // 'PERCENTAGE' or 'FIXED'
     shipping_discount_value: '30', // 30% off (or 30 AED off)
 
+    // Redis Dynamic Configuration
+    REDIS_ENABLED: process.env.REDIS_ENABLED || 'false',
+    REDIS_URL: process.env.REDIS_URL || '',
+
     // Stock Configuration
     low_stock_threshold: '5',
 
-    // Asset Storage Driver Configuration (local vs cloudinary)
+    // Asset Storage Driver Configuration (local vs cloudinary vs r2 vs s3)
     STORAGE_DRIVER: process.env.STORAGE_DRIVER || 'local',
     CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME || '',
     CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY || '',
     CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET || '',
     CLOUDINARY_FOLDER: process.env.CLOUDINARY_FOLDER || 'borkacommerce',
+
+    // Cloudflare R2 Object Storage
+    R2_ACCOUNT_ID: process.env.R2_ACCOUNT_ID || '',
+    R2_ACCESS_KEY_ID: process.env.R2_ACCESS_KEY_ID || '',
+    R2_SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY || '',
+    R2_BUCKET_NAME: process.env.R2_BUCKET_NAME || '',
+    R2_PUBLIC_DOMAIN: process.env.R2_PUBLIC_DOMAIN || '',
+
+    // AWS S3 Object Storage
+    AWS_S3_REGION: process.env.AWS_S3_REGION || 'me-central-1',
+    AWS_S3_ACCESS_KEY_ID: process.env.AWS_S3_ACCESS_KEY_ID || '',
+    AWS_S3_SECRET_ACCESS_KEY: process.env.AWS_S3_SECRET_ACCESS_KEY || '',
+    AWS_S3_BUCKET_NAME: process.env.AWS_S3_BUCKET_NAME || '',
+    AWS_S3_PUBLIC_DOMAIN: process.env.AWS_S3_PUBLIC_DOMAIN || '',
 
     // Flash Sale Spotlight Configuration
     flash_sale_enabled: 'true',
@@ -226,6 +243,7 @@ export class SiteSettingsService {
     cta_text?: string;
     cta_link?: string;
     image_url: string;
+    mobile_image_url?: string;
     alt_text?: string;
     size_type?: string;
     size_description?: string;
@@ -243,6 +261,7 @@ export class SiteSettingsService {
       cta_text: string;
       cta_link: string;
       image_url: string;
+      mobile_image_url: string;
       alt_text: string;
       size_type: string;
       size_description: string;

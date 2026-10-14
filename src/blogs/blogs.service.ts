@@ -187,6 +187,7 @@ export class BlogsService implements OnModuleInit {
         title: true,
         slug: true,
         featured_image: true,
+        main_image: true,
         published_at: true,
         views: true,
         category: true,
@@ -204,6 +205,7 @@ export class BlogsService implements OnModuleInit {
         title: true,
         slug: true,
         featured_image: true,
+        main_image: true,
         published_at: true,
         views: true,
         category: true,
@@ -477,6 +479,7 @@ export class BlogsService implements OnModuleInit {
         excerpt: dto.excerpt?.trim() || null,
         content: dto.content,
         featured_image: dto.featured_image?.trim() || null,
+        main_image: dto.main_image?.trim() || null,
         category: dto.category?.trim() || 'Abaya',
         author: dto.author?.trim() || 'Saba Al Wadi',
         is_published: dto.is_published ?? true,
@@ -506,6 +509,7 @@ export class BlogsService implements OnModuleInit {
     if (dto.excerpt !== undefined) data.excerpt = dto.excerpt?.trim() || null;
     if (dto.content !== undefined) data.content = dto.content;
     if (dto.featured_image !== undefined) data.featured_image = dto.featured_image?.trim() || null;
+    if (dto.main_image !== undefined) data.main_image = dto.main_image?.trim() || null;
     if (dto.category !== undefined) data.category = dto.category?.trim() || 'Abaya';
     if (dto.author !== undefined) data.author = dto.author?.trim() || 'Saba Al Wadi';
     if (dto.is_published !== undefined) data.is_published = dto.is_published;

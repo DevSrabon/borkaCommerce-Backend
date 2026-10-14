@@ -3,6 +3,7 @@ import { basename, join, normalize, relative, extname } from 'path';
 import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
 import { v2 as cloudinary } from 'cloudinary';
+import { S3Client, PutObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { UploadFolder, uploadFolders } from './image-upload.middleware';
 import { PrismaService } from '../database/prisma.service';
 import { SiteSettingsService } from '../site-settings/site-settings.service';
@@ -29,7 +30,7 @@ export class UploadFilesService {
   }
 
   async remove(relativePath: string, expectedFolder: UploadFolder) {
-    // If it's a Cloudinary URL, we can delete via Cloudinary or ignore
+    // If it's a remote cloud URL, we ignore or delete
     if (relativePath.startsWith('http://') || relativePath.startsWith('https://')) {
       return;
     }
@@ -56,47 +57,169 @@ export class UploadFilesService {
   }
 
   /**
-   * Process a saved file: if storage driver is Cloudinary, upload to Cloudinary.
-   * Otherwise retain in local storage.
+   * Process a saved file: uploads to Cloudflare R2, AWS S3, Cloudinary, or retains in local storage.
    */
   async processUploadedFile(folder: string, filename: string, localFilePath: string) {
-    const driver = await this.siteSettingsService.getSetting('asset_storage_driver', 'local');
-    const cloudName = await this.siteSettingsService.getSetting('cloudinary_cloud_name');
-    const apiKey = await this.siteSettingsService.getSetting('cloudinary_api_key');
-    const apiSecret = await this.siteSettingsService.getSetting('cloudinary_api_secret');
-    const cloudFolder = await this.siteSettingsService.getSetting('cloudinary_folder', 'saba_al_wadi');
+    const driver =
+      (await this.siteSettingsService.getSetting('STORAGE_DRIVER')) ||
+      (await this.siteSettingsService.getSetting('asset_storage_driver', 'local'));
 
-    if (driver === 'cloudinary' && cloudName && apiKey && apiSecret) {
-      try {
-        cloudinary.config({
-          cloud_name: cloudName,
-          api_key: apiKey,
-          api_secret: apiSecret,
-          secure: true,
-        });
+    // 1. CLOUDFLARE R2 (S3-compatible)
+    if (driver === 'r2') {
+      const accountId = await this.siteSettingsService.getSetting('R2_ACCOUNT_ID');
+      const accessKeyId = await this.siteSettingsService.getSetting('R2_ACCESS_KEY_ID');
+      const secretAccessKey = await this.siteSettingsService.getSetting('R2_SECRET_ACCESS_KEY');
+      const bucketName = await this.siteSettingsService.getSetting('R2_BUCKET_NAME');
+      const publicDomain = await this.siteSettingsService.getSetting('R2_PUBLIC_DOMAIN');
 
-        const uploadResult = await cloudinary.uploader.upload(localFilePath, {
-          folder: `${cloudFolder}/${folder}`,
-          use_filename: true,
-          unique_filename: true,
-          resource_type: 'auto',
-        });
-
-        // Optionally remove the local temp copy
+      if (accountId && accessKeyId && secretAccessKey && bucketName) {
         try {
-          await fs.unlink(localFilePath);
-        } catch (_) {}
+          const s3 = new S3Client({
+            region: 'auto',
+            endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+            credentials: { accessKeyId, secretAccessKey },
+          });
 
-        return {
-          imageUrl: uploadResult.secure_url,
-          imagePath: uploadResult.secure_url,
-          storage: 'cloudinary',
-        };
-      } catch (err: any) {
-        this.logger.error(`Cloudinary upload failed: ${err.message}. Falling back to local storage.`);
+          const fileBuffer = await fs.readFile(localFilePath);
+          const key = `${folder}/${filename}`;
+          const ext = extname(filename).toLowerCase();
+          const contentType =
+            ext === '.png'
+              ? 'image/png'
+              : ext === '.webp'
+              ? 'image/webp'
+              : ext === '.svg'
+              ? 'image/svg+xml'
+              : 'image/jpeg';
+
+          await s3.send(
+            new PutObjectCommand({
+              Bucket: bucketName,
+              Key: key,
+              Body: fileBuffer,
+              ContentType: contentType,
+            }),
+          );
+
+          try { await fs.unlink(localFilePath); } catch (_) {}
+
+          const domain = publicDomain
+            ? publicDomain.replace(/\/+$/, '')
+            : `https://${bucketName}.${accountId}.r2.cloudflarestorage.com`;
+          const finalUrl = `${domain}/${key}`;
+
+          return {
+            imageUrl: finalUrl,
+            imagePath: finalUrl,
+            storage: 'r2',
+          };
+        } catch (err: any) {
+          this.logger.error(`Cloudflare R2 upload failed: ${err.message}. Falling back to local.`);
+        }
       }
     }
 
+    // 2. AWS S3
+    if (driver === 's3') {
+      const region = (await this.siteSettingsService.getSetting('AWS_S3_REGION')) || 'me-central-1';
+      const accessKeyId = await this.siteSettingsService.getSetting('AWS_S3_ACCESS_KEY_ID');
+      const secretAccessKey = await this.siteSettingsService.getSetting('AWS_S3_SECRET_ACCESS_KEY');
+      const bucketName = await this.siteSettingsService.getSetting('AWS_S3_BUCKET_NAME');
+      const publicDomain = await this.siteSettingsService.getSetting('AWS_S3_PUBLIC_DOMAIN');
+
+      if (accessKeyId && secretAccessKey && bucketName) {
+        try {
+          const s3 = new S3Client({
+            region,
+            credentials: { accessKeyId, secretAccessKey },
+          });
+
+          const fileBuffer = await fs.readFile(localFilePath);
+          const key = `${folder}/${filename}`;
+          const ext = extname(filename).toLowerCase();
+          const contentType =
+            ext === '.png'
+              ? 'image/png'
+              : ext === '.webp'
+              ? 'image/webp'
+              : ext === '.svg'
+              ? 'image/svg+xml'
+              : 'image/jpeg';
+
+          await s3.send(
+            new PutObjectCommand({
+              Bucket: bucketName,
+              Key: key,
+              Body: fileBuffer,
+              ContentType: contentType,
+            }),
+          );
+
+          try { await fs.unlink(localFilePath); } catch (_) {}
+
+          const domain = publicDomain
+            ? publicDomain.replace(/\/+$/, '')
+            : `https://${bucketName}.s3.${region}.amazonaws.com`;
+          const finalUrl = `${domain}/${key}`;
+
+          return {
+            imageUrl: finalUrl,
+            imagePath: finalUrl,
+            storage: 's3',
+          };
+        } catch (err: any) {
+          this.logger.error(`AWS S3 upload failed: ${err.message}. Falling back to local.`);
+        }
+      }
+    }
+
+    // 3. CLOUDINARY
+    if (driver === 'cloudinary') {
+      const cloudName =
+        (await this.siteSettingsService.getSetting('CLOUDINARY_CLOUD_NAME')) ||
+        (await this.siteSettingsService.getSetting('cloudinary_cloud_name'));
+      const apiKey =
+        (await this.siteSettingsService.getSetting('CLOUDINARY_API_KEY')) ||
+        (await this.siteSettingsService.getSetting('cloudinary_api_key'));
+      const apiSecret =
+        (await this.siteSettingsService.getSetting('CLOUDINARY_API_SECRET')) ||
+        (await this.siteSettingsService.getSetting('cloudinary_api_secret'));
+      const cloudFolder =
+        (await this.siteSettingsService.getSetting('CLOUDINARY_FOLDER')) ||
+        (await this.siteSettingsService.getSetting('cloudinary_folder', 'borkacommerce'));
+
+      if (cloudName && apiKey && apiSecret) {
+        try {
+          cloudinary.config({
+            cloud_name: cloudName,
+            api_key: apiKey,
+            api_secret: apiSecret,
+            secure: true,
+          });
+
+          const uploadResult = await cloudinary.uploader.upload(localFilePath, {
+            folder: `${cloudFolder}/${folder}`,
+            use_filename: true,
+            unique_filename: true,
+            resource_type: 'auto',
+          });
+
+          try {
+            await fs.unlink(localFilePath);
+          } catch (_) {}
+
+          return {
+            imageUrl: uploadResult.secure_url,
+            imagePath: uploadResult.secure_url,
+            storage: 'cloudinary',
+          };
+        } catch (err: any) {
+          this.logger.error(`Cloudinary upload failed: ${err.message}. Falling back to local storage.`);
+        }
+      }
+    }
+
+    // 4. LOCAL DISK STORAGE (Default)
     const relPath = this.relativePath(folder, filename);
     return {
       imageUrl: this.imageUrl(relPath),
@@ -106,36 +229,153 @@ export class UploadFilesService {
   }
 
   /**
+   * Test connection to a storage provider
+   */
+  async testStorageConnection(driver: string, overrideConfig?: Record<string, string>) {
+    if (driver === 'r2') {
+      const accountId =
+        overrideConfig?.R2_ACCOUNT_ID || (await this.siteSettingsService.getSetting('R2_ACCOUNT_ID'));
+      const accessKeyId =
+        overrideConfig?.R2_ACCESS_KEY_ID || (await this.siteSettingsService.getSetting('R2_ACCESS_KEY_ID'));
+      const secretAccessKey =
+        overrideConfig?.R2_SECRET_ACCESS_KEY ||
+        (await this.siteSettingsService.getSetting('R2_SECRET_ACCESS_KEY'));
+      const bucketName =
+        overrideConfig?.R2_BUCKET_NAME || (await this.siteSettingsService.getSetting('R2_BUCKET_NAME'));
+
+      if (!accountId || !accessKeyId || !secretAccessKey || !bucketName) {
+        return {
+          success: false,
+          message: 'All R2 credentials (Account ID, Access Key, Secret Key, Bucket Name) are required.',
+        };
+      }
+
+      try {
+        const s3 = new S3Client({
+          region: 'auto',
+          endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+          credentials: { accessKeyId, secretAccessKey },
+        });
+        const start = Date.now();
+        await s3.send(new ListObjectsV2Command({ Bucket: bucketName, MaxKeys: 1 }));
+        const latency = Date.now() - start;
+        return { success: true, message: `Cloudflare R2 Bucket verified! Latency: ${latency}ms`, latency };
+      } catch (err: any) {
+        return { success: false, message: `Cloudflare R2 connection failed: ${err.message}` };
+      }
+    }
+
+    if (driver === 's3') {
+      const region =
+        overrideConfig?.AWS_S3_REGION ||
+        (await this.siteSettingsService.getSetting('AWS_S3_REGION')) ||
+        'me-central-1';
+      const accessKeyId =
+        overrideConfig?.AWS_S3_ACCESS_KEY_ID ||
+        (await this.siteSettingsService.getSetting('AWS_S3_ACCESS_KEY_ID'));
+      const secretAccessKey =
+        overrideConfig?.AWS_S3_SECRET_ACCESS_KEY ||
+        (await this.siteSettingsService.getSetting('AWS_S3_SECRET_ACCESS_KEY'));
+      const bucketName =
+        overrideConfig?.AWS_S3_BUCKET_NAME ||
+        (await this.siteSettingsService.getSetting('AWS_S3_BUCKET_NAME'));
+
+      if (!accessKeyId || !secretAccessKey || !bucketName) {
+        return {
+          success: false,
+          message: 'All AWS S3 credentials (Access Key, Secret Key, Bucket Name) are required.',
+        };
+      }
+
+      try {
+        const s3 = new S3Client({
+          region,
+          credentials: { accessKeyId, secretAccessKey },
+        });
+        const start = Date.now();
+        await s3.send(new ListObjectsV2Command({ Bucket: bucketName, MaxKeys: 1 }));
+        const latency = Date.now() - start;
+        return { success: true, message: `AWS S3 Bucket verified (${region})! Latency: ${latency}ms`, latency };
+      } catch (err: any) {
+        return { success: false, message: `AWS S3 connection failed: ${err.message}` };
+      }
+    }
+
+    if (driver === 'cloudinary') {
+      const cloudName =
+        overrideConfig?.CLOUDINARY_CLOUD_NAME ||
+        (await this.siteSettingsService.getSetting('CLOUDINARY_CLOUD_NAME'));
+      const apiKey =
+        overrideConfig?.CLOUDINARY_API_KEY ||
+        (await this.siteSettingsService.getSetting('CLOUDINARY_API_KEY'));
+      const apiSecret =
+        overrideConfig?.CLOUDINARY_API_SECRET ||
+        (await this.siteSettingsService.getSetting('CLOUDINARY_API_SECRET'));
+
+      if (!cloudName || !apiKey || !apiSecret) {
+        return {
+          success: false,
+          message: 'Cloudinary Cloud Name, API Key, and API Secret are required.',
+        };
+      }
+
+      try {
+        cloudinary.config({ cloud_name: cloudName, api_key: apiKey, api_secret: apiSecret, secure: true });
+        const start = Date.now();
+        await cloudinary.api.ping();
+        const latency = Date.now() - start;
+        return { success: true, message: `Cloudinary API verified! Latency: ${latency}ms`, latency };
+      } catch (err: any) {
+        return { success: false, message: `Cloudinary ping failed: ${err.message}` };
+      }
+    }
+
+    return { success: true, message: 'Local disk storage is active (/uploads directory).' };
+  }
+
+  /**
    * Get storage distribution status
    */
   async getStorageStatus() {
-    const driver = await this.siteSettingsService.getSetting('asset_storage_driver', 'local');
-    const cloudName = await this.siteSettingsService.getSetting('cloudinary_cloud_name');
+    const driver =
+      (await this.siteSettingsService.getSetting('STORAGE_DRIVER')) ||
+      (await this.siteSettingsService.getSetting('asset_storage_driver', 'local'));
+    const cloudName = await this.siteSettingsService.getSetting('CLOUDINARY_CLOUD_NAME') || await this.siteSettingsService.getSetting('cloudinary_cloud_name');
+    const r2Bucket = await this.siteSettingsService.getSetting('R2_BUCKET_NAME');
+    const s3Bucket = await this.siteSettingsService.getSetting('AWS_S3_BUCKET_NAME');
 
     const [productImages, variantImages, banners, categories, blogs] = await Promise.all([
       this.prisma.product_images.findMany({ select: { id: true, image_url: true } }),
       this.prisma.variant_images.findMany({ select: { id: true, image: true } }),
-      this.prisma.banners.findMany({ select: { id: true, image_url: true } }),
+      this.prisma.banners.findMany({ select: { id: true, image_url: true, mobile_image_url: true } }),
       this.prisma.categories.findMany({ select: { id: true, image: true } }),
-      this.prisma.blogs.findMany({ select: { id: true, featured_image: true } }),
+      this.prisma.blogs.findMany({ select: { id: true, featured_image: true, main_image: true } }),
     ]);
 
     let localCount = 0;
     let cloudinaryCount = 0;
+    let r2Count = 0;
+    let s3Count = 0;
     let externalCount = 0;
 
     const allUrls = [
       ...productImages.map((i) => i.image_url),
       ...variantImages.map((i) => i.image),
       ...banners.map((i) => i.image_url),
+      ...banners.map((i) => i.mobile_image_url).filter(Boolean),
       ...categories.map((i) => i.image).filter(Boolean),
       ...blogs.map((i) => i.featured_image).filter(Boolean),
+      ...blogs.map((i) => i.main_image).filter(Boolean),
     ] as string[];
 
     for (const url of allUrls) {
       if (!url) continue;
       if (url.includes('cloudinary.com')) {
         cloudinaryCount++;
+      } else if (url.includes('.r2.') || url.includes('r2.cloudflarestorage.com') || url.includes('.r2.dev')) {
+        r2Count++;
+      } else if (url.includes('.s3.') || url.includes('amazonaws.com')) {
+        s3Count++;
       } else if (url.includes('/uploads/') || url.startsWith('/')) {
         localCount++;
       } else {
@@ -146,9 +386,13 @@ export class UploadFilesService {
     return {
       activeDriver: driver,
       configuredCloudinary: Boolean(cloudName),
+      configuredR2: Boolean(r2Bucket),
+      configuredS3: Boolean(s3Bucket),
       totalAssets: allUrls.length,
       localAssets: localCount,
       cloudinaryAssets: cloudinaryCount,
+      r2Assets: r2Count,
+      s3Assets: s3Count,
       externalAssets: externalCount,
     };
   }

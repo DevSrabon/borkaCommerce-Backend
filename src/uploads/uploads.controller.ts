@@ -1,4 +1,4 @@
-import { Controller, Get, Post, UseGuards, UseInterceptors, UploadedFile, BadRequestException, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards, UseInterceptors, UploadedFile, BadRequestException, Query } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
@@ -14,6 +14,11 @@ export class UploadsController {
   @Get('storage-status')
   async getStorageStatus() {
     return this.uploadFilesService.getStorageStatus();
+  }
+
+  @Post('test-storage')
+  async testStorage(@Body() body: { driver: string; config?: Record<string, string> }) {
+    return this.uploadFilesService.testStorageConnection(body.driver, body.config);
   }
 
   @Post('migrate-to-cloudinary')

@@ -9,7 +9,9 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { SiteSettingsService } from './site-settings.service';
+import { RedisService } from '../redis/redis.service';
 import { AdminGuard } from '../auth/admin.guard';
 
 // ─── Public Storefront ─────────────────────────────────────────────────────
@@ -63,7 +65,10 @@ export class StorefrontSiteController {
 @Controller('admin')
 @UseGuards(AdminGuard)
 export class AdminSiteController {
-  constructor(private readonly svc: SiteSettingsService) {}
+  constructor(
+    private readonly svc: SiteSettingsService,
+    private readonly moduleRef: ModuleRef,
+  ) {}
 
   // Banners
   @Get('banners')
@@ -80,6 +85,7 @@ export class AdminSiteController {
       cta_text?: string;
       cta_link?: string;
       image_url: string;
+      mobile_image_url?: string;
       alt_text?: string;
       size_type?: string;
       size_description?: string;
@@ -100,6 +106,7 @@ export class AdminSiteController {
       cta_text: string;
       cta_link: string;
       image_url: string;
+      mobile_image_url: string;
       alt_text: string;
       size_type: string;
       size_description: string;
@@ -122,8 +129,38 @@ export class AdminSiteController {
   }
 
   @Patch('site-settings')
-  updateSettings(@Body() dto: Record<string, string>) {
-    return this.svc.upsertSettings(dto);
+  async updateSettings(@Body() dto: Record<string, string>) {
+    const updated = await this.svc.upsertSettings(dto);
+    if ('REDIS_ENABLED' in dto || 'REDIS_URL' in dto) {
+      try {
+        const redisService = this.moduleRef.get(RedisService, { strict: false });
+        if (redisService) {
+          await redisService.initClient();
+        }
+      } catch (_) {}
+    }
+    return updated;
+  }
+
+  // Dynamic Redis endpoints
+  @Get('redis/status')
+  async getRedisStatus() {
+    try {
+      const redisService = this.moduleRef.get(RedisService, { strict: false });
+      if (redisService) return await redisService.getStatus();
+    } catch (_) {}
+    return { enabled: false, connected: false, healthy: false };
+  }
+
+  @Post('redis/test')
+  async testRedis(@Body() body: { url?: string }) {
+    try {
+      const redisService = this.moduleRef.get(RedisService, { strict: false });
+      if (redisService) return await redisService.testConnection(body?.url);
+    } catch (err: any) {
+      return { success: false, message: err.message };
+    }
+    return { success: false, message: 'Redis service not available' };
   }
 
   // Cache Clear
