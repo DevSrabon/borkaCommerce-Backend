@@ -105,6 +105,10 @@ export class CreateProductDto {
 
   @IsString()
   @IsOptional()
+  product_number?: string;
+
+  @IsString()
+  @IsOptional()
   sku_prefix?: string;
 
   @IsString()
@@ -176,6 +180,10 @@ export class UpdateProductDto {
   @IsString()
   @IsOptional()
   short_description?: string;
+
+  @IsString()
+  @IsOptional()
+  product_number?: string;
 
   @IsString()
   @IsOptional()

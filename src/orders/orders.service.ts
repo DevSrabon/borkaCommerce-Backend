@@ -40,10 +40,11 @@ export class OrdersService {
   }
 
   async checkout(customerId: string, dto: CheckoutDto) {
-    // Generate a unique order number (e.g. BC-YYYYMMDD-XXXX)
-    const orderNumber = `BC-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
-
     const result = await this.prisma.$transaction(async (tx) => {
+      // Generate unique sequential order number (SW20250001...) & production number (P-1000...)
+      const orderNumber = await this.generateOrderNumber(tx);
+      const productionNo = await this.generateProductionNumber(tx);
+
       // 1. Resolve address
       const address = await tx.customer_addresses.findFirst({
         where: { id: dto.address_id, customer_id: customerId },
@@ -198,6 +199,7 @@ export class OrdersService {
       const order = await tx.orders.create({
         data: {
           order_number: orderNumber,
+          production_no: productionNo,
           customer_id: customerId,
           status: isCod ? order_status.CONFIRMED : order_status.PENDING,
           subtotal: orderSubtotal,
@@ -464,10 +466,121 @@ export class OrdersService {
     });
   }
 
+  // --- NUMBER GENERATION HELPERS ---
+
+  /**
+   * Generates sequential order numbers in the format SW20250001, SW20250002...
+   */
+  async generateOrderNumber(tx?: any): Promise<string> {
+    const client = tx || this.prisma;
+    const lastOrder = await client.orders.findFirst({
+      where: {
+        order_number: {
+          startsWith: 'SW',
+        },
+      },
+      orderBy: {
+        order_number: 'desc',
+      },
+      select: {
+        order_number: true,
+      },
+    });
+
+    let nextSeq = 20250001;
+    if (lastOrder && lastOrder.order_number) {
+      const numPart = parseInt(lastOrder.order_number.replace(/^SW/i, ''), 10);
+      if (!isNaN(numPart) && numPart >= 20250001) {
+        nextSeq = numPart + 1;
+      }
+    }
+
+    return `SW${nextSeq}`;
+  }
+
+  /**
+   * Generates sequential production numbers in the format P-1000, P-1001, P-1002...
+   */
+  async generateProductionNumber(tx?: any): Promise<string> {
+    const client = tx || this.prisma;
+    const lastOrder = await client.orders.findFirst({
+      where: {
+        production_no: {
+          startsWith: 'P-',
+        },
+      },
+      orderBy: {
+        production_no: 'desc',
+      },
+      select: {
+        production_no: true,
+      },
+    });
+
+    let nextSeq = 1000;
+    if (lastOrder && lastOrder.production_no) {
+      const numPart = parseInt(lastOrder.production_no.replace(/^P-/i, ''), 10);
+      if (!isNaN(numPart) && numPart >= 1000) {
+        nextSeq = numPart + 1;
+      }
+    }
+
+    return `P-${nextSeq}`;
+  }
+
+  /**
+   * Generates or assigns a production number to an existing order if missing
+   */
+  async generateProductionNoForOrder(orderId: string) {
+    const order = await this.prisma.orders.findUnique({
+      where: { id: orderId },
+      select: { id: true, production_no: true, order_number: true },
+    });
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+    if (order.production_no) {
+      return order;
+    }
+    const productionNo = await this.generateProductionNumber();
+    return this.prisma.orders.update({
+      where: { id: orderId },
+      data: { production_no: productionNo },
+    });
+  }
+
   // --- ADMIN AND SHARED ENDPOINTS ---
 
-  async findAll() {
+  async findAll(status?: string, startDate?: string, endDate?: string, search?: string) {
+    const where: any = {};
+
+    if (status && status !== 'ALL') {
+      where.status = status as order_status;
+    }
+
+    if (startDate || endDate) {
+      where.created_at = {};
+      if (startDate) {
+        where.created_at.gte = new Date(`${startDate}T00:00:00.000Z`);
+      }
+      if (endDate) {
+        where.created_at.lte = new Date(`${endDate}T23:59:59.999Z`);
+      }
+    }
+
+    if (search) {
+      const q = search.trim();
+      where.OR = [
+        { order_number: { contains: q, mode: 'insensitive' } },
+        { production_no: { contains: q, mode: 'insensitive' } },
+        { customer: { email: { contains: q, mode: 'insensitive' } } },
+        { customer: { first_name: { contains: q, mode: 'insensitive' } } },
+        { customer: { last_name: { contains: q, mode: 'insensitive' } } },
+      ];
+    }
+
     return this.prisma.orders.findMany({
+      where,
       include: {
         customer: {
           select: { first_name: true, last_name: true, email: true },
@@ -617,9 +730,11 @@ export class OrdersService {
       throw new BadRequestException('Order must contain at least one item');
     }
 
-    const orderNumber = `BC-MANUAL-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
-
     return this.prisma.$transaction(async (tx) => {
+      // Generate unique sequential order number (SW20250001...) & production number (P-1000...)
+      const orderNumber = await this.generateOrderNumber(tx);
+      const productionNo = await this.generateProductionNumber(tx);
+
       // 1. Resolve or create customer
       let customerId = dto.customer_id;
       if (!customerId) {
@@ -718,6 +833,7 @@ export class OrdersService {
       const order = await tx.orders.create({
         data: {
           order_number: orderNumber,
+          production_no: productionNo,
           customer_id: customerId,
           status: (dto.status as order_status) || order_status.CONFIRMED,
           subtotal,

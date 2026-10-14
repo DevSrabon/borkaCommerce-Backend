@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, UseGuards, Req, Headers, BadRequestException, Delete } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, UseGuards, Req, Headers, BadRequestException, Delete, Query } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { CheckoutDto, UpdateOrderStatusDto, CreateManualOrderDto, UpdateOrderItemsDto, UpdateOrderAddressDto } from './dto/orders.dto';
 import { AuthGuard } from '../auth/auth.guard';
@@ -53,8 +53,19 @@ export class OrdersController {
 
   @UseGuards(AdminGuard)
   @Get('admin/orders')
-  findAllAdmin() {
-    return this.ordersService.findAll();
+  findAllAdmin(
+    @Query('status') status?: string,
+    @Query('start_date') startDate?: string,
+    @Query('end_date') endDate?: string,
+    @Query('search') search?: string,
+  ) {
+    return this.ordersService.findAll(status, startDate, endDate, search);
+  }
+
+  @UseGuards(AdminGuard)
+  @Post('admin/orders/:id/generate-production-no')
+  generateProductionNo(@Param('id') id: string) {
+    return this.ordersService.generateProductionNoForOrder(id);
   }
 
   @UseGuards(AdminGuard)

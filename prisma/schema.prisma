@@ -106,6 +106,7 @@ model categories {
 // 2. Products
 model products {
   id                String            @id @default(uuid())
+  product_number    String?           @unique
   name              String
   slug              String            @unique
   description       String
@@ -382,6 +383,7 @@ model cart_items {
 model orders {
   id             String         @id @default(uuid())
   order_number   String         @unique
+  production_no  String?        @unique
   customer_id    String
   customer       customers      @relation(fields: [customer_id], references: [id], onDelete: Cascade)
   status         order_status   @default(PENDING)

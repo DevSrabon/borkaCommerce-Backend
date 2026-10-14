@@ -36,8 +36,22 @@ export class HttpLoggerMiddleware implements NestMiddleware {
   constructor(private readonly loggerService: LoggerService) {}
 
   use(req: Request, res: Response, next: NextFunction) {
+    const { method, originalUrl } = req;
+    const upperMethod = (method || '').toUpperCase();
+    const route = (originalUrl || req.url || '').split('?')[0];
+
+    // User requirement:
+    // "options, logs routes save hobe na."
+    if (
+      upperMethod === 'OPTIONS' ||
+      route.includes('/logs') ||
+      route.startsWith('/admin/logs')
+    ) {
+      return next();
+    }
+
     const startTime = process.hrtime();
-    const { method, originalUrl, ip, headers } = req;
+    const { ip, headers } = req;
     const userAgent = headers['user-agent'] as string;
 
     // Capture sanitized payload
@@ -49,10 +63,12 @@ export class HttpLoggerMiddleware implements NestMiddleware {
       const diff = process.hrtime(startTime);
       const durationMs = diff[0] * 1000 + diff[1] / 1e6;
 
-      const route = originalUrl.split('?')[0];
-
-      // Avoid recursion on log fetching itself
-      if (route.startsWith('/admin/logs')) {
+      // Double-check to avoid logging OPTIONS or logs routes
+      if (
+        upperMethod === 'OPTIONS' ||
+        route.includes('/logs') ||
+        route.startsWith('/admin/logs')
+      ) {
         return;
       }
 

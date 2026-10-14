@@ -26,11 +26,25 @@ export class ProductsService {
       throw new BadRequestException('Product slug already exists');
     }
 
+    // Generate or validate sequential product number (e.g. P1000)
+    let productNumber = dto.product_number?.trim();
+    if (!productNumber) {
+      productNumber = await this.generateNextProductNumber();
+    } else {
+      const existingProductNumber = await this.prisma.products.findUnique({
+        where: { product_number: productNumber },
+      });
+      if (existingProductNumber) {
+        throw new BadRequestException(`Product number "${productNumber}" is already in use`);
+      }
+    }
+
     // Run within a transaction to ensure database consistency
     return this.prisma.$transaction(async (tx) => {
       // 1. Create the Product
       const product = await tx.products.create({
         data: {
+          product_number: productNumber,
           name: dto.name,
           slug: dto.slug,
           description: dto.description,
@@ -305,6 +319,7 @@ export class ProductsService {
       const updated = await tx.products.update({
         where: { id },
         data: {
+          product_number: dto.product_number !== undefined ? dto.product_number : undefined,
           name: dto.name,
           slug: dto.slug,
           description: dto.description,
@@ -790,6 +805,7 @@ export class ProductsService {
     if (search) {
       // PostgreSQL full text or basic search
       whereClause.OR = [
+        { product_number: { contains: search, mode: 'insensitive' } },
         { name: { contains: search, mode: 'insensitive' } },
         { description: { contains: search, mode: 'insensitive' } },
         { seo_keywords: { contains: search, mode: 'insensitive' } },
@@ -952,6 +968,7 @@ export class ProductsService {
 
       return {
         id: prod.id,
+        product_number: prod.product_number,
         name: prod.name,
         slug: prod.slug,
         description: prod.description,
@@ -1302,6 +1319,7 @@ export class ProductsService {
 
     return {
       id: product.id,
+      product_number: product.product_number,
       name: product.name,
       slug: product.slug,
       description: product.description,
@@ -1330,6 +1348,37 @@ export class ProductsService {
         count: product.reviews.length,
       },
     };
+  }
+
+  /**
+   * Generates sequential product number like P1000, P1001, etc.
+   */
+  async generateNextProductNumber(client?: any): Promise<string> {
+    const db = client || this.prisma;
+    const rows = await db.products.findMany({
+      where: {
+        product_number: {
+          not: null,
+        },
+      },
+      select: {
+        product_number: true,
+      },
+    });
+
+    let maxNum = 999;
+    for (const r of rows) {
+      if (!r.product_number) continue;
+      const match = r.product_number.match(/^P-?(\d+)$/i);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (!isNaN(num) && num > maxNum) {
+          maxNum = num;
+        }
+      }
+    }
+
+    return `P${maxNum + 1}`;
   }
 }
 
