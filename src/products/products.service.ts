@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { CreateProductDto, UpdateProductDto } from './dto/product.dto';
-import { product_status, variant_status, inventory_transaction_type, offer_status } from '@prisma/client';
+import { product_status, variant_status, inventory_transaction_type, offer_status, review_status } from '@prisma/client';
 import { UploadFilesService } from '../uploads/upload-files.service';
 import { MailService } from '../mail/mail.service';
 
@@ -1099,135 +1099,169 @@ export class ProductsService {
       };
     });
 
-    // Fetch related products based on product_related_categories
-    const relatedCategoryIds = product.related_categories.map((rc) => rc.category_id);
-    let relatedProducts: any[] = [];
-    if (relatedCategoryIds.length > 0) {
-      const rawRelated = await this.prisma.products.findMany({
+    // Fetch related products:
+    // 1. Explicit related categories from product_related_categories
+    // 2. Product's own categories (product_categories)
+    // 3. Fallback to other published products so related products are always available
+    const explicitRelatedCategoryIds = product.related_categories.map((rc) => rc.category_id);
+    const ownCategoryIds = product.product_categories.map((pc) => pc.category_id);
+    const targetCategoryIds = Array.from(new Set([...explicitRelatedCategoryIds, ...ownCategoryIds]));
+
+    const relatedInclude = {
+      product_categories: { include: { category: true } },
+      images: { orderBy: { sort_order: 'asc' as const } },
+      variants: {
+        where: { status: variant_status.ACTIVE },
+        include: {
+          images: { orderBy: { sort_order: 'asc' as const } },
+          inventories: true,
+          attributes: { include: { attribute_value: { include: { attribute: true } } } },
+          offers: { include: { offer: true } },
+        },
+      },
+      reviews: {
+        where: { status: review_status.APPROVED },
+        select: { rating: true },
+      },
+    };
+
+    let rawRelated: any[] = [];
+    if (targetCategoryIds.length > 0) {
+      rawRelated = await this.prisma.products.findMany({
         where: {
           id: { not: product.id },
           deleted_at: null,
           status: product_status.PUBLISHED,
           product_categories: {
-            some: { category_id: { in: relatedCategoryIds } },
+            some: { category_id: { in: targetCategoryIds } },
           },
         },
-        include: {
-          product_categories: { include: { category: true } },
-          images: { orderBy: { sort_order: 'asc' } },
-          variants: {
-            where: { status: variant_status.ACTIVE },
-            include: {
-              images: { orderBy: { sort_order: 'asc' } },
-              inventories: true,
-              attributes: { include: { attribute_value: { include: { attribute: true } } } },
-              offers: { include: { offer: true } },
-            },
-          },
-        },
-        take: 4,
-      });
-
-      relatedProducts = rawRelated.map((prod) => {
-        const prodCatIds = prod.product_categories.map((pc) => pc.category_id);
-        const prodCatOffers = activeCategoryOffers.filter((offer) =>
-          offer.categories.some((oc) => prodCatIds.includes(oc.category_id))
-        );
-
-        const mappedVars = prod.variants.map((v) => {
-          const activeOffers = v.offers
-            .map((op) => op.offer)
-            .filter(
-              (o) =>
-                o.status === offer_status.ACTIVE &&
-                new Date(o.start_date) <= now &&
-                new Date(o.end_date) >= now,
-            );
-
-          const allActive = [...activeOffers, ...prodCatOffers];
-          allActive.sort((a, b) => b.priority - a.priority);
-
-          const basePrice = Number(v.price);
-          const baseComparePrice = v.compare_price ? Number(v.compare_price) : null;
-          const priceUsd = basePrice / 3.67;
-          const priceGbp = basePrice / 4.70;
-          const comparePriceUsd = baseComparePrice ? baseComparePrice / 3.67 : null;
-          const comparePriceGbp = baseComparePrice ? baseComparePrice / 4.70 : null;
-
-          let offerApplied: any = null;
-          let finalPrice = basePrice;
-          let finalPriceUsd = priceUsd;
-          let finalPriceGbp = priceGbp;
-
-          if (allActive.length > 0) {
-            const topOffer = allActive[0];
-            offerApplied = {
-              id: topOffer.id,
-              name: topOffer.name,
-              type: topOffer.type,
-              discount_type: topOffer.discount_type,
-              discount_value: Number(topOffer.discount_value),
-              end_date: topOffer.end_date,
-            };
-
-            if (topOffer.discount_type === 'PERCENTAGE') {
-              finalPrice = finalPrice * (1 - Number(topOffer.discount_value) / 100);
-              finalPriceUsd = finalPriceUsd * (1 - Number(topOffer.discount_value) / 100);
-              finalPriceGbp = finalPriceGbp * (1 - Number(topOffer.discount_value) / 100);
-            } else {
-              finalPrice = Math.max(0, finalPrice - Number(topOffer.discount_value));
-              finalPriceUsd = Math.max(0, finalPriceUsd - Number(topOffer.discount_value) / 3.67);
-              finalPriceGbp = Math.max(0, finalPriceGbp - Number(topOffer.discount_value) / 4.70);
-            }
-          }
-
-          const totalAvailable = v.inventories.reduce((acc, inv) => acc + inv.available_quantity, 0);
-
-          return {
-            id: v.id,
-            sku: v.sku,
-            barcode: v.barcode,
-            weight: v.weight,
-            price: basePrice,
-            price_usd: Number(priceUsd.toFixed(2)),
-            price_gbp: Number(priceGbp.toFixed(2)),
-            compare_price: baseComparePrice,
-            compare_price_usd: comparePriceUsd ? Number(comparePriceUsd.toFixed(2)) : null,
-            compare_price_gbp: comparePriceGbp ? Number(comparePriceGbp.toFixed(2)) : null,
-            available_stock: totalAvailable,
-            images: v.images.map((img) => img.image),
-            attributes: v.attributes.map((av) => ({
-              name: av.attribute_value.attribute.name,
-              value: av.attribute_value.value,
-            })),
-            offer: offerApplied,
-            discounted_price: Number(finalPrice.toFixed(2)),
-            discounted_price_usd: Number(finalPriceUsd.toFixed(2)),
-            discounted_price_gbp: Number(finalPriceGbp.toFixed(2)),
-          };
-        });
-
-        const prices = mappedVars.map((v) => v.discounted_price);
-        const minPrice = prices.length > 0 ? Math.min(...prices) : 0;
-        const originalPrices = mappedVars.map((v) => v.price);
-        const minOriginalPrice = originalPrices.length > 0 ? Math.min(...originalPrices) : 0;
-
-        return {
-          id: prod.id,
-          name: prod.name,
-          slug: prod.slug,
-          description: prod.description,
-          short_description: prod.short_description,
-          is_featured: prod.is_featured,
-          thumbnail: prod.images.find((img) => img.is_thumbnail)?.image_url || prod.images[0]?.image_url || null,
-          images: prod.images.map((img) => img.image_url),
-          categories: prod.product_categories.map((pc) => ({ id: pc.category.id, name: pc.category.name, slug: pc.category.slug })),
-          min_price: minPrice,
-          min_original_price: minOriginalPrice,
-          variants: mappedVars,
-        };
+        include: relatedInclude,
+        orderBy: [{ is_featured: 'desc' }, { created_at: 'desc' }],
+        take: 8,
       });
     }
+
+    if (rawRelated.length < 4) {
+      const existingIds = [product.id, ...rawRelated.map((p) => p.id)];
+      const backfill = await this.prisma.products.findMany({
+        where: {
+          id: { notIn: existingIds },
+          deleted_at: null,
+          status: product_status.PUBLISHED,
+        },
+        include: relatedInclude,
+        orderBy: [{ is_featured: 'desc' }, { created_at: 'desc' }],
+        take: 8 - rawRelated.length,
+      });
+      rawRelated = [...rawRelated, ...backfill];
+    }
+
+    const relatedProducts = rawRelated.map((prod) => {
+      const prodCatIds = prod.product_categories.map((pc) => pc.category_id);
+      const prodCatOffers = activeCategoryOffers.filter((offer) =>
+        offer.categories.some((oc) => prodCatIds.includes(oc.category_id))
+      );
+
+      const mappedVars = prod.variants.map((v) => {
+        const activeOffers = v.offers
+          .map((op) => op.offer)
+          .filter(
+            (o) =>
+              o.status === offer_status.ACTIVE &&
+              new Date(o.start_date) <= now &&
+              new Date(o.end_date) >= now,
+          );
+
+        const allActive = [...activeOffers, ...prodCatOffers];
+        allActive.sort((a, b) => b.priority - a.priority);
+
+        const basePrice = Number(v.price);
+        const baseComparePrice = v.compare_price ? Number(v.compare_price) : null;
+        const priceUsd = basePrice / 3.67;
+        const priceGbp = basePrice / 4.70;
+        const comparePriceUsd = baseComparePrice ? baseComparePrice / 3.67 : null;
+        const comparePriceGbp = baseComparePrice ? baseComparePrice / 4.70 : null;
+
+        let offerApplied: any = null;
+        let finalPrice = basePrice;
+        let finalPriceUsd = priceUsd;
+        let finalPriceGbp = priceGbp;
+
+        if (allActive.length > 0) {
+          const topOffer = allActive[0];
+          offerApplied = {
+            id: topOffer.id,
+            name: topOffer.name,
+            type: topOffer.type,
+            discount_type: topOffer.discount_type,
+            discount_value: Number(topOffer.discount_value),
+            end_date: topOffer.end_date,
+          };
+
+          if (topOffer.discount_type === 'PERCENTAGE') {
+            finalPrice = finalPrice * (1 - Number(topOffer.discount_value) / 100);
+            finalPriceUsd = finalPriceUsd * (1 - Number(topOffer.discount_value) / 100);
+            finalPriceGbp = finalPriceGbp * (1 - Number(topOffer.discount_value) / 100);
+          } else {
+            finalPrice = Math.max(0, finalPrice - Number(topOffer.discount_value));
+            finalPriceUsd = Math.max(0, finalPriceUsd - Number(topOffer.discount_value) / 3.67);
+            finalPriceGbp = Math.max(0, finalPriceGbp - Number(topOffer.discount_value) / 4.70);
+          }
+        }
+
+        const totalAvailable = v.inventories.reduce((acc, inv) => acc + inv.available_quantity, 0);
+
+        return {
+          id: v.id,
+          sku: v.sku,
+          barcode: v.barcode,
+          weight: v.weight,
+          price: basePrice,
+          price_usd: Number(priceUsd.toFixed(2)),
+          price_gbp: Number(priceGbp.toFixed(2)),
+          compare_price: baseComparePrice,
+          compare_price_usd: comparePriceUsd ? Number(comparePriceUsd.toFixed(2)) : null,
+          compare_price_gbp: comparePriceGbp ? Number(comparePriceGbp.toFixed(2)) : null,
+          available_stock: totalAvailable,
+          images: v.images.map((img) => img.image),
+          attributes: v.attributes.map((av) => ({
+            name: av.attribute_value.attribute.name,
+            value: av.attribute_value.value,
+          })),
+          offer: offerApplied,
+          discounted_price: Number(finalPrice.toFixed(2)),
+          discounted_price_usd: Number(finalPriceUsd.toFixed(2)),
+          discounted_price_gbp: Number(finalPriceGbp.toFixed(2)),
+        };
+      });
+
+      const prices = mappedVars.map((v) => v.discounted_price);
+      const minPrice = prices.length > 0 ? Math.min(...prices) : 0;
+      const originalPrices = mappedVars.map((v) => v.price);
+      const minOriginalPrice = originalPrices.length > 0 ? Math.min(...originalPrices) : 0;
+
+      const avgRating = prod.reviews && prod.reviews.length > 0
+        ? Number((prod.reviews.reduce((acc, r) => acc + r.rating, 0) / prod.reviews.length).toFixed(1))
+        : 0;
+
+      return {
+        id: prod.id,
+        name: prod.name,
+        slug: prod.slug,
+        description: prod.description,
+        short_description: prod.short_description,
+        is_featured: prod.is_featured,
+        thumbnail: prod.images.find((img) => img.is_thumbnail)?.image_url || prod.images[0]?.image_url || null,
+        images: prod.images.map((img) => img.image_url),
+        categories: prod.product_categories.map((pc) => ({ id: pc.category.id, name: pc.category.name, slug: pc.category.slug })),
+        min_price: minPrice,
+        min_original_price: minOriginalPrice,
+        average_rating: avgRating,
+        review_count: prod.reviews?.length || 0,
+        variants: mappedVars,
+      };
+    });
 
     // Calculate average rating
     const averageRating = product.reviews.length > 0
