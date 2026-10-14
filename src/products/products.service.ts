@@ -215,34 +215,44 @@ export class ProductsService {
     });
   }
 
-  async findAllAdmin() {
-    const products = await this.prisma.products.findMany({
-      where: { deleted_at: null },
-      include: {
-        product_categories: {
-          include: { category: true },
-        },
-        related_categories: {
-          include: { category: true },
-        },
-        variants: {
-          include: {
-            inventories: {
-              include: { warehouse: true },
+  async findAllAdmin(limit = 50, skip = 0) {
+    const take = Number(limit) > 0 ? Number(limit) : 50;
+    const skipCount = Number(skip) >= 0 ? Number(skip) : 0;
+
+    const [products, total] = await Promise.all([
+      this.prisma.products.findMany({
+        where: { deleted_at: null },
+        take,
+        skip: skipCount,
+        include: {
+          product_categories: {
+            include: { category: true },
+          },
+          related_categories: {
+            include: { category: true },
+          },
+          variants: {
+            include: {
+              inventories: {
+                include: { warehouse: true },
+              },
+            },
+          },
+          images: true,
+          reviews: {
+            select: {
+              rating: true,
             },
           },
         },
-        images: true,
-        reviews: {
-          select: {
-            rating: true,
-          },
-        },
-      },
-      orderBy: { created_at: 'desc' },
-    });
+        orderBy: { created_at: 'desc' },
+      }),
+      this.prisma.products.count({
+        where: { deleted_at: null },
+      }),
+    ]);
 
-    return products.map((p) => {
+    const items = products.map((p) => {
       const reviewList = p.reviews || [];
       const reviewCount = reviewList.length;
       const avgRating =
@@ -258,6 +268,8 @@ export class ProductsService {
         },
       };
     });
+
+    return { items, total };
   }
 
   async findOne(id: string) {
@@ -654,15 +666,25 @@ export class ProductsService {
 
   // --- ADMIN ATTRIBUTE METHODS ---
 
-  async findAllAttributes() {
-    return this.prisma.attributes.findMany({
-      include: {
-        values: true,
-      },
-      orderBy: {
-        name: 'asc',
-      },
-    });
+  async findAllAttributes(limit = 50, skip = 0) {
+    const take = Number(limit) > 0 ? Number(limit) : 50;
+    const skipCount = Number(skip) >= 0 ? Number(skip) : 0;
+
+    const [items, total] = await Promise.all([
+      this.prisma.attributes.findMany({
+        take,
+        skip: skipCount,
+        include: {
+          values: true,
+        },
+        orderBy: {
+          name: 'asc',
+        },
+      }),
+      this.prisma.attributes.count(),
+    ]);
+
+    return { items, total };
   }
 
   async createAttribute(name: string) {

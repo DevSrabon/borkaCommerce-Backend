@@ -7,8 +7,10 @@ import {
   Param,
   Body,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { PagesService } from './pages.service';
 import { CreatePageDto, UpdatePageDto } from './dto/page.dto';
 import { AdminGuard } from '../auth/admin.guard';
@@ -33,8 +35,19 @@ export class AdminPagesController {
   constructor(private readonly pagesService: PagesService) {}
 
   @Get()
-  async getAllPages(@Query('search') search?: string) {
-    return this.pagesService.getAllPages(search);
+  async getAllPages(
+    @Query('search') search?: string,
+    @Query('limit') limit?: string,
+    @Query('skip') skip?: string,
+    @Res({ passthrough: true }) res?: Response,
+  ) {
+    const limitNum = limit ? parseInt(limit, 10) : 50;
+    const skipNum = skip ? parseInt(skip, 10) : 0;
+    const { items, total } = await this.pagesService.getAllPages(search, limitNum, skipNum);
+    if (res) {
+      res.setHeader('x-total-count', total.toString());
+    }
+    return items;
   }
 
   @Get(':id')

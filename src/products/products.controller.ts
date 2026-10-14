@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, Res, UseGuards, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
+import type { Response } from 'express';
 import { ProductsService } from './products.service';
 import { CreateProductDto, UpdateProductDto } from './dto/product.dto';
 import { AdminGuard } from '../auth/admin.guard';
@@ -72,8 +73,18 @@ export class ProductsController {
 
   @UseGuards(AdminGuard)
   @Get('admin/attributes')
-  findAllAttributes() {
-    return this.productsService.findAllAttributes();
+  async findAllAttributes(
+    @Query('limit') limit?: string,
+    @Query('skip') skip?: string,
+    @Res({ passthrough: true }) res?: Response,
+  ) {
+    const limitNum = limit ? parseInt(limit, 10) : 50;
+    const skipNum = skip ? parseInt(skip, 10) : 0;
+    const { items, total } = await this.productsService.findAllAttributes(limitNum, skipNum);
+    if (res) {
+      res.setHeader('x-total-count', total.toString());
+    }
+    return items;
   }
 
   @UseGuards(AdminGuard)
@@ -132,8 +143,18 @@ export class ProductsController {
 
   @UseGuards(AdminGuard)
   @Get('admin/products')
-  findAllAdmin() {
-    return this.productsService.findAllAdmin();
+  async findAllAdmin(
+    @Query('limit') limit?: string,
+    @Query('skip') skip?: string,
+    @Res({ passthrough: true }) res?: Response,
+  ) {
+    const limitNum = limit ? parseInt(limit, 10) : 50;
+    const skipNum = skip ? parseInt(skip, 10) : 0;
+    const { items, total } = await this.productsService.findAllAdmin(limitNum, skipNum);
+    if (res) {
+      res.setHeader('x-total-count', total.toString());
+    }
+    return items;
   }
 
   @UseGuards(AdminGuard)

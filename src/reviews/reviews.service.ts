@@ -140,28 +140,39 @@ export class ReviewsService {
 
   // --- ADMIN METHODS ---
 
-  async getAllReviewsAdmin(status?: review_status) {
-    return this.prisma.reviews.findMany({
-      where: status ? { status } : {},
-      include: {
-        customer: {
-          select: {
-            id: true,
-            first_name: true,
-            last_name: true,
-            email: true,
+  async getAllReviewsAdmin(status?: review_status, limit = 50, skip = 0) {
+    const take = Number(limit) > 0 ? Number(limit) : 50;
+    const skipCount = Number(skip) >= 0 ? Number(skip) : 0;
+    const where = status ? { status } : {};
+
+    const [reviews, total] = await Promise.all([
+      this.prisma.reviews.findMany({
+        where,
+        take,
+        skip: skipCount,
+        include: {
+          customer: {
+            select: {
+              id: true,
+              first_name: true,
+              last_name: true,
+              email: true,
+            },
+          },
+          product: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+            },
           },
         },
-        product: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-          },
-        },
-      },
-      orderBy: { created_at: 'desc' },
-    });
+        orderBy: { created_at: 'desc' },
+      }),
+      this.prisma.reviews.count({ where }),
+    ]);
+
+    return { items: reviews, total };
   }
 
   async updateReviewStatus(id: string, status: review_status) {

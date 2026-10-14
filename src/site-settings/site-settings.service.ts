@@ -233,8 +233,20 @@ export class SiteSettingsService {
     });
   }
 
-  async getAllBanners() {
-    return this.prisma.banners.findMany({ orderBy: { sort_order: 'asc' } });
+  async getAllBanners(limit = 50, skip = 0) {
+    const take = Number(limit) > 0 ? Number(limit) : 50;
+    const skipCount = Number(skip) >= 0 ? Number(skip) : 0;
+
+    const [items, total] = await Promise.all([
+      this.prisma.banners.findMany({
+        take,
+        skip: skipCount,
+        orderBy: { sort_order: 'asc' },
+      }),
+      this.prisma.banners.count(),
+    ]);
+
+    return { items, total };
   }
 
   async createBanner(dto: {

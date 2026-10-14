@@ -12,8 +12,19 @@ export class InventoryService {
     });
   }
 
-  async findAllWarehouses() {
-    return this.prisma.warehouses.findMany();
+  async findAllWarehouses(limit = 50, skip = 0) {
+    const take = Number(limit) > 0 ? Number(limit) : 50;
+    const skipCount = Number(skip) >= 0 ? Number(skip) : 0;
+
+    const [items, total] = await Promise.all([
+      this.prisma.warehouses.findMany({
+        take,
+        skip: skipCount,
+      }),
+      this.prisma.warehouses.count(),
+    ]);
+
+    return { items, total };
   }
 
   async adjustStock(dto: AdjustInventoryDto) {
@@ -108,20 +119,29 @@ export class InventoryService {
     });
   }
 
-  async getTransactions(variantId?: string) {
+  async getTransactions(variantId?: string, limit = 50, skip = 0) {
+    const take = Number(limit) > 0 ? Number(limit) : 50;
+    const skipCount = Number(skip) >= 0 ? Number(skip) : 0;
     const where: any = {};
     if (variantId) {
       where.variant_id = variantId;
     }
-    return this.prisma.inventory_transactions.findMany({
-      where,
-      include: {
-        warehouse: true,
-        variant: {
-          include: { product: true },
+    const [items, total] = await Promise.all([
+      this.prisma.inventory_transactions.findMany({
+        where,
+        take,
+        skip: skipCount,
+        include: {
+          warehouse: true,
+          variant: {
+            include: { product: true },
+          },
         },
-      },
-      orderBy: { created_at: 'desc' },
-    });
+        orderBy: { created_at: 'desc' },
+      }),
+      this.prisma.inventory_transactions.count({ where }),
+    ]);
+
+    return { items, total };
   }
 }

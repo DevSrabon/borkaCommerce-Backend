@@ -30,10 +30,20 @@ export class CategoriesService {
     });
   }
 
-  async findAll() {
-    return this.prisma.categories.findMany({
-      orderBy: { sort_order: 'asc' },
-    });
+  async findAll(limit = 50, skip = 0) {
+    const take = Number(limit) > 0 ? Number(limit) : 50;
+    const skipCount = Number(skip) >= 0 ? Number(skip) : 0;
+
+    const [items, total] = await Promise.all([
+      this.prisma.categories.findMany({
+        take,
+        skip: skipCount,
+        orderBy: { sort_order: 'asc' },
+      }),
+      this.prisma.categories.count(),
+    ]);
+
+    return { items, total };
   }
 
   async findAllActive() {

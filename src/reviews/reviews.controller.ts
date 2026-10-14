@@ -7,8 +7,10 @@ import {
   Body,
   Param,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { ReviewsService } from './reviews.service';
 import { CreateReviewDto, UpdateReviewStatusDto } from './dto/reviews.dto';
 import { AuthGuard } from '../auth/auth.guard';
@@ -48,8 +50,19 @@ export class ReviewsAdminController {
   constructor(private readonly reviewsService: ReviewsService) {}
 
   @Get()
-  getAllReviews(@Query('status') status?: review_status) {
-    return this.reviewsService.getAllReviewsAdmin(status);
+  async getAllReviews(
+    @Query('status') status?: review_status,
+    @Query('limit') limit?: string,
+    @Query('skip') skip?: string,
+    @Res({ passthrough: true }) res?: Response,
+  ) {
+    const limitNum = limit ? parseInt(limit, 10) : 50;
+    const skipNum = skip ? parseInt(skip, 10) : 0;
+    const { items, total } = await this.reviewsService.getAllReviewsAdmin(status, limitNum, skipNum);
+    if (res) {
+      res.setHeader('x-total-count', total.toString());
+    }
+    return items;
   }
 
   @Patch(':id/status')

@@ -422,29 +422,37 @@ export class AuthService {
     return this.createSession(customer);
   }
 
-  async findAllCustomers() {
-    const customers = await this.prisma.customers.findMany({
-      select: {
-        id: true,
-        first_name: true,
-        last_name: true,
-        email: true,
-        phone: true,
-        role: true,
-        is_blocked: true,
-        email_verified: true,
-        created_at: true,
-        _count: {
-          select: {
-            orders: true,
-            reviews: true,
+  async findAllCustomers(limit = 50, skip = 0) {
+    const take = Number(limit) > 0 ? Number(limit) : 50;
+    const skipCount = Number(skip) >= 0 ? Number(skip) : 0;
+
+    const [customers, total] = await Promise.all([
+      this.prisma.customers.findMany({
+        take,
+        skip: skipCount,
+        select: {
+          id: true,
+          first_name: true,
+          last_name: true,
+          email: true,
+          phone: true,
+          role: true,
+          is_blocked: true,
+          email_verified: true,
+          created_at: true,
+          _count: {
+            select: {
+              orders: true,
+              reviews: true,
+            },
           },
         },
-      },
-      orderBy: { created_at: 'desc' },
-    });
+        orderBy: { created_at: 'desc' },
+      }),
+      this.prisma.customers.count(),
+    ]);
 
-    return customers;
+    return { items: customers, total };
   }
 
   async getCustomerDetails(id: string) {

@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { CategoriesService } from './categories.service';
 import { CreateCategoryDto, UpdateCategoryDto } from './dto/category.dto';
 import { AdminGuard } from '../auth/admin.guard';
@@ -17,8 +18,18 @@ export class CategoriesController {
 
   @UseGuards(AdminGuard)
   @Get('admin/categories')
-  findAllAdmin() {
-    return this.categoriesService.findAll();
+  async findAllAdmin(
+    @Query('limit') limit?: string,
+    @Query('skip') skip?: string,
+    @Res({ passthrough: true }) res?: Response,
+  ) {
+    const limitNum = limit ? parseInt(limit, 10) : 50;
+    const skipNum = skip ? parseInt(skip, 10) : 0;
+    const { items, total } = await this.categoriesService.findAll(limitNum, skipNum);
+    if (res) {
+      res.setHeader('x-total-count', total.toString());
+    }
+    return items;
   }
 
   @UseGuards(AdminGuard)

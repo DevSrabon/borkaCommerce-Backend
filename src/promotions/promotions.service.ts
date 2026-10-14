@@ -141,22 +141,32 @@ export class PromotionsService {
     return { success: true, message: `Offer "${existing.name}" deleted successfully` };
   }
 
-  async findAllOffers() {
-    return this.prisma.offers.findMany({
-      include: {
-        products: {
-          include: {
-            variant: {
-              include: { product: true },
+  async findAllOffers(limit = 50, skip = 0) {
+    const take = Number(limit) > 0 ? Number(limit) : 50;
+    const skipCount = Number(skip) >= 0 ? Number(skip) : 0;
+
+    const [items, total] = await Promise.all([
+      this.prisma.offers.findMany({
+        take,
+        skip: skipCount,
+        include: {
+          products: {
+            include: {
+              variant: {
+                include: { product: true },
+              },
             },
           },
+          categories: {
+            include: { category: true },
+          },
         },
-        categories: {
-          include: { category: true },
-        },
-      },
-      orderBy: { priority: 'desc' },
-    });
+        orderBy: { priority: 'desc' },
+      }),
+      this.prisma.offers.count(),
+    ]);
+
+    return { items, total };
   }
 
   // --- COUPONS LOGIC ---
@@ -204,10 +214,20 @@ export class PromotionsService {
     return { success: true, message: `Coupon "${existing.code}" deleted successfully` };
   }
 
-  async findAllCoupons() {
-    return this.prisma.coupons.findMany({
-      orderBy: { created_at: 'desc' },
-    });
+  async findAllCoupons(limit = 50, skip = 0) {
+    const take = Number(limit) > 0 ? Number(limit) : 50;
+    const skipCount = Number(skip) >= 0 ? Number(skip) : 0;
+
+    const [items, total] = await Promise.all([
+      this.prisma.coupons.findMany({
+        take,
+        skip: skipCount,
+        orderBy: { created_at: 'desc' },
+      }),
+      this.prisma.coupons.count(),
+    ]);
+
+    return { items, total };
   }
 
   async findActivePromotions() {

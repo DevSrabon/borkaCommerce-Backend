@@ -551,7 +551,9 @@ export class OrdersService {
 
   // --- ADMIN AND SHARED ENDPOINTS ---
 
-  async findAll(status?: string, startDate?: string, endDate?: string, search?: string) {
+  async findAll(status?: string, startDate?: string, endDate?: string, search?: string, limit = 50, skip = 0) {
+    const take = Number(limit) > 0 ? Number(limit) : 50;
+    const skipCount = Number(skip) >= 0 ? Number(skip) : 0;
     const where: any = {};
 
     if (status && status !== 'ALL') {
@@ -579,29 +581,36 @@ export class OrdersService {
       ];
     }
 
-    return this.prisma.orders.findMany({
-      where,
-      include: {
-        customer: {
-          select: { first_name: true, last_name: true, email: true },
-        },
-        items: {
-          include: {
-            variant: {
-              include: {
-                images: true,
-                product: {
-                  include: {
-                    images: true,
+    const [orders, total] = await Promise.all([
+      this.prisma.orders.findMany({
+        where,
+        take,
+        skip: skipCount,
+        include: {
+          customer: {
+            select: { first_name: true, last_name: true, email: true },
+          },
+          items: {
+            include: {
+              variant: {
+                include: {
+                  images: true,
+                  product: {
+                    include: {
+                      images: true,
+                    },
                   },
                 },
               },
             },
           },
         },
-      },
-      orderBy: { created_at: 'desc' },
-    });
+        orderBy: { created_at: 'desc' },
+      }),
+      this.prisma.orders.count({ where }),
+    ]);
+
+    return { items: orders, total };
   }
 
   async findOne(id: string) {
@@ -1057,13 +1066,21 @@ export class OrdersService {
     } catch (_) {}
   }
 
-  async getDeliveryPartners() {
-    let partners = await this.prisma.delivery_partners.findMany({
-      where: { is_active: true },
-      orderBy: { name: 'asc' },
-    });
+  async getDeliveryPartners(limit = 50, skip = 0) {
+    const take = Number(limit) > 0 ? Number(limit) : 50;
+    const skipCount = Number(skip) >= 0 ? Number(skip) : 0;
 
-    if (partners.length === 0) {
+    const [partners, total] = await Promise.all([
+      this.prisma.delivery_partners.findMany({
+        where: { is_active: true },
+        take,
+        skip: skipCount,
+        orderBy: { name: 'asc' },
+      }),
+      this.prisma.delivery_partners.count({ where: { is_active: true } }),
+    ]);
+
+    if (partners.length === 0 && skipCount === 0) {
       const defaults = [
         { name: 'Steadfast', tracking_url_template: 'https://steadfast.com.bd/t/{tracking_number}' },
         { name: 'Aramex', tracking_url_template: 'https://www.aramex.com/track/results?shipmentNumber={tracking_number}' },
@@ -1081,13 +1098,16 @@ export class OrdersService {
           });
         } catch (_) {}
       }
-      partners = await this.prisma.delivery_partners.findMany({
+      const seeded = await this.prisma.delivery_partners.findMany({
         where: { is_active: true },
+        take,
+        skip: skipCount,
         orderBy: { name: 'asc' },
       });
+      return { items: seeded, total: seeded.length };
     }
 
-    return partners;
+    return { items: partners, total };
   }
 
   async createDeliveryPartner(dto: { name: string; tracking_url_template?: string; contact_phone?: string }) {

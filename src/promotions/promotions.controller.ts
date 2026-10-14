@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, UseGuards, Req, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { PromotionsService } from './promotions.service';
 import { CreateOfferDto, UpdateOfferDto, CreateCouponDto, UpdateCouponDto, ValidateCouponDto } from './dto/promotions.dto';
 import { AdminGuard } from '../auth/admin.guard';
@@ -18,8 +19,18 @@ export class PromotionsController {
 
   @UseGuards(AdminGuard)
   @Get('admin/offers')
-  findAllOffers() {
-    return this.promotionsService.findAllOffers();
+  async findAllOffers(
+    @Query('limit') limit?: string,
+    @Query('skip') skip?: string,
+    @Res({ passthrough: true }) res?: Response,
+  ) {
+    const limitNum = limit ? parseInt(limit, 10) : 50;
+    const skipNum = skip ? parseInt(skip, 10) : 0;
+    const { items, total } = await this.promotionsService.findAllOffers(limitNum, skipNum);
+    if (res) {
+      res.setHeader('x-total-count', total.toString());
+    }
+    return items;
   }
 
   @UseGuards(AdminGuard)
@@ -42,8 +53,18 @@ export class PromotionsController {
 
   @UseGuards(AdminGuard)
   @Get('admin/coupons')
-  findAllCoupons() {
-    return this.promotionsService.findAllCoupons();
+  async findAllCoupons(
+    @Query('limit') limit?: string,
+    @Query('skip') skip?: string,
+    @Res({ passthrough: true }) res?: Response,
+  ) {
+    const limitNum = limit ? parseInt(limit, 10) : 50;
+    const skipNum = skip ? parseInt(skip, 10) : 0;
+    const { items, total } = await this.promotionsService.findAllCoupons(limitNum, skipNum);
+    if (res) {
+      res.setHeader('x-total-count', total.toString());
+    }
+    return items;
   }
 
   @UseGuards(AdminGuard)

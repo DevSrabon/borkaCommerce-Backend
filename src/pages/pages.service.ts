@@ -35,7 +35,9 @@ export class PagesService implements OnModuleInit {
 
   // ─── Admin Endpoints ─────────────────────────────────────────────────────
 
-  async getAllPages(search?: string) {
+  async getAllPages(search?: string, limit = 50, skip = 0) {
+    const take = Number(limit) > 0 ? Number(limit) : 50;
+    const skipCount = Number(skip) >= 0 ? Number(skip) : 0;
     const where: any = {};
     if (search && search.trim()) {
       where.OR = [
@@ -44,19 +46,26 @@ export class PagesService implements OnModuleInit {
       ];
     }
 
-    return this.prisma.pages.findMany({
-      where,
-      orderBy: { updated_at: 'desc' },
-      select: {
-        id: true,
-        title: true,
-        slug: true,
-        is_published: true,
-        meta_title: true,
-        created_at: true,
-        updated_at: true,
-      },
-    });
+    const [items, total] = await Promise.all([
+      this.prisma.pages.findMany({
+        where,
+        take,
+        skip: skipCount,
+        orderBy: { updated_at: 'desc' },
+        select: {
+          id: true,
+          title: true,
+          slug: true,
+          is_published: true,
+          meta_title: true,
+          created_at: true,
+          updated_at: true,
+        },
+      }),
+      this.prisma.pages.count({ where }),
+    ]);
+
+    return { items, total };
   }
 
   async getPageById(id: string) {

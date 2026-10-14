@@ -34,6 +34,7 @@ async function bootstrap() {
   app.enableCors({
     origin: true, // In production, replace with specific frontend URL
     credentials: true,
+    exposedHeaders: ['x-total-count'],
   });
 
   // Configure Swagger API Documentation
