@@ -271,5 +271,126 @@ export class MailService {
     this.logger.log(`\n========================================\n[PRODUCT STATUS NOTIFICATION] Product: "${productName}" is now ${newStatus}\n========================================`);
     return true;
   }
+
+  async sendCustomerChatMissedEmail(
+    session: {
+      session_id: string;
+      customer_name?: string | null;
+      customer_email?: string | null;
+    },
+    message: string,
+    attachmentUrl?: string | null,
+  ): Promise<boolean> {
+    const { transporter, from, adminEmail } = await this.getTransporterAndFrom();
+    const envAdminEmails = process.env.ADMIN_EMAILS
+      ? process.env.ADMIN_EMAILS.split(',').map((e) => e.trim()).filter(Boolean)
+      : [];
+    const recipientEmails = envAdminEmails.length > 0 ? envAdminEmails : [adminEmail];
+    const customerDisplayName = session.customer_name || 'Customer';
+    const customerEmailStr = session.customer_email || 'Not provided';
+    const subject = `💬 [MISSED CHAT] Inactive Admin Alert: New message from ${customerDisplayName} (${session.session_id.slice(0, 8)})`;
+
+    const html = `
+      <div style="font-family: 'Helvetica Neue', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 25px; background-color: #18181b; color: #f4f4f5; border: 1px solid #3f3f46; border-radius: 8px;">
+        <div style="border-bottom: 1px solid #3f3f46; padding-bottom: 12px; margin-bottom: 16px;">
+          <h2 style="color: #fbbf24; margin: 0; font-size: 18px;">⚠️ Missed Customer Chat Notification</h2>
+          <p style="color: #a1a1aa; font-size: 12px; margin: 4px 0 0 0;">An inquiry was received while all store administrators were inactive / offline.</p>
+        </div>
+        
+        <div style="background-color: #27272a; padding: 16px; border-radius: 6px; margin-bottom: 16px;">
+          <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Customer Name:</strong> <span style="color: #38bdf8;">${customerDisplayName}</span></p>
+          <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Customer Email:</strong> <span style="color: #e4e4e7;">${customerEmailStr}</span></p>
+          <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Chat Session ID:</strong> <code style="color: #d4af37; background: #000; padding: 2px 6px; border-radius: 4px;">${session.session_id}</code></p>
+          <p style="margin: 0; font-size: 13px;"><strong>Time Received:</strong> ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Dubai' })} (UAE Time)</p>
+        </div>
+
+        <div style="background-color: #09090b; border-left: 4px solid #d4af37; padding: 14px 16px; border-radius: 4px; margin-bottom: 20px;">
+          <p style="margin: 0 0 6px 0; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #a1a1aa; font-weight: bold;">Customer Message:</p>
+          <p style="margin: 0; font-size: 14px; color: #ffffff; line-height: 1.5; white-space: pre-wrap;">${message || '(Sent an attachment)'}</p>
+          ${attachmentUrl ? `<p style="margin: 10px 0 0 0; font-size: 12px;"><a href="${attachmentUrl}" target="_blank" style="color: #38bdf8; text-decoration: underline;">View Uploaded Attachment &rarr;</a></p>` : ''}
+        </div>
+
+        <div style="text-align: center; margin-top: 20px;">
+          <a href="http://localhost:3000/admin/chat?session=${session.session_id}" style="display: inline-block; background-color: #d4af37; color: #000000; font-weight: bold; text-decoration: none; padding: 10px 24px; border-radius: 6px; font-size: 13px;">Open Admin Live Chat &rarr;</a>
+        </div>
+
+        <p style="font-size: 11px; color: #71717a; text-align: center; margin-top: 20px; margin-bottom: 0;">
+          This automatic notification was dispatched because no store administrators have been active online in the past 60 seconds.
+        </p>
+      </div>
+    `;
+
+    this.logger.log(`\n========================================\n[MISSED CHAT EMAIL TO ADMIN] Recipients: ${recipientEmails.join(', ')} | Customer: ${customerDisplayName} | Msg: ${message}\n========================================`);
+
+    if (transporter) {
+      try {
+        await transporter.sendMail({
+          from,
+          to: recipientEmails.join(', '),
+          subject,
+          html,
+        });
+      } catch (err: any) {
+        this.logger.error(`Failed to send missed chat notification email to admin: ${err.message}`);
+      }
+    }
+    return true;
+  }
+
+  async sendAdminReplyToCustomerEmail(
+    customerEmail: string,
+    customerName: string,
+    replyMessage: string,
+    attachmentUrl?: string | null,
+    sessionId?: string,
+  ): Promise<boolean> {
+    const { transporter, from } = await this.getTransporterAndFrom();
+    const subject = `💬 Response to your inquiry - Saba Al Wadi Concierge`;
+
+    const html = `
+      <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; padding: 30px; background-color: #0c0a09; color: #f5f5f4; border: 1px solid #292524; border-radius: 8px;">
+        <div style="text-align: center; margin-bottom: 25px;">
+          <h1 style="color: #d4af37; margin: 0; font-size: 24px; letter-spacing: 2px;">SABA AL WADI</h1>
+          <p style="color: #a8a29e; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 5px;">Luxury Emirati Abayas</p>
+        </div>
+        <div style="background-color: #1c1917; padding: 25px; border-radius: 6px; border: 1px solid #44403c;">
+          <h2 style="color: #d4af37; margin-top: 0; font-size: 16px;">Concierge Consultation Update</h2>
+          <p style="font-size: 14px; color: #e7e5e4;">Dear ${customerName || 'Valued Customer'},</p>
+          <p style="font-size: 13px; color: #a8a29e; line-height: 1.6;">Our styling consultant has replied to your inquiry:</p>
+          
+          <div style="background-color: #0c0a09; border-left: 3px solid #d4af37; padding: 15px; margin: 20px 0; border-radius: 4px;">
+            <p style="font-size: 14px; color: #f5f5f4; margin: 0; line-height: 1.6; white-space: pre-wrap;">${replyMessage}</p>
+            ${attachmentUrl ? `<p style="margin: 12px 0 0 0; font-size: 12px;"><a href="${attachmentUrl}" target="_blank" style="color: #d4af37; text-decoration: underline;">View Attached Document &rarr;</a></p>` : ''}
+          </div>
+
+          <div style="text-align: center; margin-top: 25px;">
+            <a href="http://localhost:3000" style="display: inline-block; background-color: #d4af37; color: #0c0a09; text-decoration: none; font-size: 12px; font-weight: bold; padding: 10px 22px; border-radius: 4px; text-transform: uppercase; letter-spacing: 1px;">Continue Live Chat on Store</a>
+          </div>
+
+          <p style="font-size: 11px; color: #78716c; margin-top: 20px; margin-bottom: 0;">You can also simply reply directly to this chat session on our website.</p>
+        </div>
+        <div style="text-align: center; margin-top: 25px; font-size: 11px; color: #57534e;">
+          &copy; ${new Date().getFullYear()} Saba Al Wadi Couture LLC. Dubai, United Arab Emirates.
+        </div>
+      </div>
+    `;
+
+    this.logger.log(`\n========================================\n[ADMIN REPLY EMAIL TO CUSTOMER] To: ${customerEmail} | Session: ${sessionId || 'N/A'}\n========================================`);
+
+    if (transporter) {
+      try {
+        await transporter.sendMail({
+          from,
+          to: customerEmail,
+          subject,
+          html,
+        });
+        return true;
+      } catch (err: any) {
+        this.logger.error(`Failed to send admin reply email to customer: ${err.message}`);
+      }
+    }
+    return true;
+  }
 }
 

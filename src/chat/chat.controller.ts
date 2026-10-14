@@ -154,6 +154,7 @@ export class ChatController {
       dto.attachment_url,
       dto.attachment_type,
       dto.attachment_name,
+      dto.send_email || false,
     );
   }
 

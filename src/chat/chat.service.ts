@@ -1,5 +1,6 @@
 import { Injectable, HttpException, HttpStatus, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
+import { MailService } from '../mail/mail.service';
 
 interface RateLimitBucket {
   timestamps: number[];
@@ -22,7 +23,32 @@ export class ChatService {
   // Real-time Presence: Map of sessionId -> timestamp (ms) of customer activity
   private customerActivityMap = new Map<string, number>();
 
-  constructor(private prisma: PrismaService) {}
+  // Real-time Admin Presence: timestamp (ms) of the most recent admin action / poll
+  private lastAdminActivityTimestamp: number = 0;
+  // Cooldown map: sessionId -> timestamp (ms) of last missed chat email sent (to prevent flooding)
+  private sessionLastEmailedMap = new Map<string, number>();
+  private sessionLastInactiveNoticeMap = new Map<string, number>();
+
+  constructor(
+    private prisma: PrismaService,
+    private mailService: MailService,
+  ) {}
+
+  /**
+   * Record admin presence (polled unread count, opened sessions, replied, or typed)
+   */
+  recordAdminActivity() {
+    this.lastAdminActivityTimestamp = Date.now();
+  }
+
+  /**
+   * Check if all store administrators are currently inactive/offline
+   * Considers admins inactive if no admin activity was detected in the last 60 seconds
+   */
+  isAdminInactive(): boolean {
+    if (!this.lastAdminActivityTimestamp) return true;
+    return Date.now() - this.lastAdminActivityTimestamp > 60000;
+  }
 
   /**
    * Record customer activity (presence heartbeat / message / poll)
@@ -289,6 +315,45 @@ export class ChatService {
       });
     }
 
+    // 6. Automated Missed Chat Alert to Admins via Email
+    // If all store administrators are inactive / offline, dispatch an instant email notification
+    if (this.isAdminInactive()) {
+      const lastEmailed = this.sessionLastEmailedMap.get(sessionId) || 0;
+      // 3 minutes cooldown per session to avoid email flooding
+      if (Date.now() - lastEmailed > 3 * 60 * 1000) {
+        this.sessionLastEmailedMap.set(sessionId, Date.now());
+        const sessionPayload = {
+          session_id: sessionId,
+          customer_name: session?.customer_name || senderName || 'Customer',
+          customer_email: session?.customer_email || null,
+        };
+        this.mailService
+          .sendCustomerChatMissedEmail(
+            sessionPayload,
+            (message || '').trim(),
+            attachmentUrl,
+          )
+          .catch((err) =>
+            this.logger.warn(`Failed to send missed chat notification email: ${err.message}`),
+          );
+      }
+
+      // Friendly bot notice if consultants are away
+      const lastNotified = this.sessionLastInactiveNoticeMap.get(sessionId) || 0;
+      if (Date.now() - lastNotified > 15 * 60 * 1000) {
+        this.sessionLastInactiveNoticeMap.set(sessionId, Date.now());
+        await this.prisma.chat_messages.create({
+          data: {
+            session_id: sessionId,
+            sender_type: 'BOT',
+            sender_name: 'Saba Concierge',
+            message:
+              'Our styling consultants are currently away. We have dispatched your message to management via email and will reply shortly.',
+          },
+        });
+      }
+    }
+
     return customerMsg;
   }
 
@@ -302,7 +367,9 @@ export class ChatService {
     attachmentUrl?: string,
     attachmentType?: string,
     attachmentName?: string,
+    sendEmail = false,
   ) {
+    this.recordAdminActivity();
     if (!message?.trim() && !attachmentUrl) {
       throw new BadRequestException('Message or attachment is required.');
     }
@@ -342,6 +409,21 @@ export class ChatService {
       },
     });
 
+    // Optional email copy to customer if admin enabled the option and customer has email
+    if (sendEmail && session.customer_email) {
+      this.mailService
+        .sendAdminReplyToCustomerEmail(
+          session.customer_email,
+          session.customer_name || 'Valued Customer',
+          (message || '').trim(),
+          attachmentUrl,
+          sessionId,
+        )
+        .catch((err) =>
+          this.logger.warn(`Failed to send admin reply email to customer: ${err.message}`),
+        );
+    }
+
     return adminMsg;
   }
 
@@ -351,6 +433,8 @@ export class ChatService {
   async setTyping(sessionId: string, senderType: 'CUSTOMER' | 'ADMIN', isTyping: boolean) {
     if (senderType === 'CUSTOMER') {
       this.recordCustomerActivity(sessionId);
+    } else {
+      this.recordAdminActivity();
     }
 
     const data =
@@ -369,6 +453,7 @@ export class ChatService {
    */
   async markAsRead(sessionId: string, readerType: 'CUSTOMER' | 'ADMIN') {
     if (readerType === 'ADMIN') {
+      this.recordAdminActivity();
       await this.prisma.chat_messages.updateMany({
         where: { session_id: sessionId, sender_type: 'CUSTOMER', is_read: false },
         data: { is_read: true },
@@ -393,6 +478,7 @@ export class ChatService {
    * Admin: get all chat sessions with presence & last active status
    */
   async getAdminSessions() {
+    this.recordAdminActivity();
     const sessions = await this.prisma.chat_sessions.findMany({
       orderBy: { last_message_at: 'desc' },
       include: {
@@ -418,6 +504,7 @@ export class ChatService {
    * Admin: get total unread count across all sessions
    */
   async getAdminUnreadTotal() {
+    this.recordAdminActivity();
     const aggregate = await this.prisma.chat_sessions.aggregate({
       _sum: {
         unread_admin_count: true,

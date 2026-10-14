@@ -60,6 +60,10 @@ export class AdminReplyChatDto {
   @IsOptional()
   @IsString()
   attachment_name?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  send_email?: boolean;
 }
 
 export class SetTypingDto {
