@@ -93,6 +93,8 @@ model categories {
   image_alt_text String?
   sort_order  Int       @default(0)
   is_active   Boolean   @default(true)
+  show_in_navbar   Boolean   @default(true)
+  show_on_homepage Boolean   @default(false)
   created_at  DateTime  @default(now())
   updated_at  DateTime  @updatedAt
 
@@ -397,6 +399,12 @@ model orders {
   tracking_number  String?
   tracking_url     String?
   delivery_notes   String?
+  shipping_country     String?
+  shipping_city        String?
+  shipping_area        String?
+  shipping_street      String?
+  shipping_building    String?
+  shipping_postal_code String?
   created_at     DateTime       @default(now())
   updated_at     DateTime       @updatedAt
 

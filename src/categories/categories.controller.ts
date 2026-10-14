@@ -47,6 +47,11 @@ export class CategoriesController {
 
   // --- STOREFRONT (ECOMMERCE) ROUTES ---
 
+  @Get('ecommerce/categories')
+  findAllStorefront() {
+    return this.categoriesService.findAllActive();
+  }
+
   @Get('ecommerce/categories/tree')
   async getTreeStorefront() {
     // Return only active categories for storefront

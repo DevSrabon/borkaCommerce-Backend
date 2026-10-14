@@ -29,6 +29,14 @@ export class CreateCategoryDto {
   @IsOptional()
   is_active?: boolean;
 
+  @IsBoolean()
+  @IsOptional()
+  show_in_navbar?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  show_on_homepage?: boolean;
+
   @IsUUID()
   @IsOptional()
   parent_id?: string;
@@ -62,6 +70,14 @@ export class UpdateCategoryDto {
   @IsBoolean()
   @IsOptional()
   is_active?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  show_in_navbar?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  show_on_homepage?: boolean;
 
   @IsUUID()
   @IsOptional()

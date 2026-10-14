@@ -55,17 +55,40 @@ export class SiteSettingsService {
     // Stock Configuration
     low_stock_threshold: '5',
 
-    // Size Chart Configuration
-    size_chart_guide_text: 'Abaya lengths are standard shoulder-to-hem measurements in inches. Choose your regular size based on height for a graceful floor-length drape.',
-    size_chart_image: '',
-    size_chart_table: JSON.stringify([
-      { size: '50', height: "5'0\" - 5'1\"", length: '50 in', bust: '40 in', sleeve: '26 in' },
-      { size: '52', height: "5'2\" - 5'3\"", length: '52 in', bust: '42 in', sleeve: '27 in' },
-      { size: '54', height: "5'4\" - 5'5\"", length: '54 in', bust: '44 in', sleeve: '28 in' },
-      { size: '56', height: "5'6\" - 5'7\"", length: '56 in', bust: '46 in', sleeve: '29 in' },
-      { size: '58', height: "5'8\" - 5'9\"", length: '58 in', bust: '48 in', sleeve: '30 in' },
-      { size: '60', height: "5'10\"+", length: '60 in', bust: '50 in', sleeve: '31 in' },
-    ]),
+    // Asset Storage Driver Configuration (local vs cloudinary)
+    STORAGE_DRIVER: process.env.STORAGE_DRIVER || 'local',
+    CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME || '',
+    CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY || '',
+    CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET || '',
+    CLOUDINARY_FOLDER: process.env.CLOUDINARY_FOLDER || 'borkacommerce',
+
+    // Flash Sale Spotlight Configuration
+    flash_sale_enabled: 'true',
+
+    // Size Chart Configuration (Only file upload)
+    size_chart_file: '',
+
+    // Dynamic Footer Configuration
+    footer_about_text:
+      'Saba Al Wadi is an online business specializing in selling high-quality Abayas, offering a variety of stylish and modest designs for women.',
+    footer_phone_1: 'Tel: +971 55 642 4758',
+    footer_phone_2: 'Mob: +971 55 79 17 409',
+    footer_phone_3: 'Mob: +971 50 93 75 919',
+    footer_phone_4: 'Mob: +971 55 467 5285 (Suit No: M-16 Contact Number)',
+    footer_email: 'contact@sabaalwadi.com',
+    footer_hours_sat_thu: 'Sat-Thu: 09:00am-11:00pm',
+    footer_hours_fri: 'Friday: 04:00pm-10:00pm',
+    footer_address_1:
+      'Suit No: M-49, 2nd Floor, Al Habtoor Building (Abu Hail Centre), Abu Hail, Deira-Dubai, P.O Box-67242',
+    footer_address_2:
+      'Suit No: M-104, 2nd Floor, Al Habtoor Building (Abu Hail Centre), Abu Hail, Deira-Dubai, P.O Box-67242',
+    footer_address_3:
+      'Suit No: M-16, 2nd Floor, Al Habtoor Building (Abu Hail Centre), Abu Hail, Deira-Dubai, P.O Box-67242',
+    social_facebook: 'https://facebook.com/sabaalwadi',
+    social_instagram: 'https://instagram.com/sabaalwadi',
+    social_youtube: 'https://youtube.com/@sabaalwadi',
+    social_pinterest: 'https://pinterest.com/sabaalwadi',
+    social_tiktok: 'https://tiktok.com/@sabaalwadi',
   };
 
   // ─── Dynamic Setting Getter ──────────────────────────────────────────────

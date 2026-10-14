@@ -3,7 +3,7 @@ import { PrismaService } from '../database/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { PromotionsService } from '../promotions/promotions.service';
 import { MailService } from '../mail/mail.service';
-import { CheckoutDto, UpdateOrderStatusDto, CreateManualOrderDto, UpdateOrderItemsDto } from './dto/orders.dto';
+import { CheckoutDto, UpdateOrderStatusDto, CreateManualOrderDto, UpdateOrderItemsDto, UpdateOrderAddressDto } from './dto/orders.dto';
 import { order_status, payment_status, payment_method, inventory_transaction_type, offer_status } from '@prisma/client';
 import Stripe from 'stripe';
 
@@ -209,6 +209,12 @@ export class OrdersService {
           payment_status: payment_status.PENDING,
           payment_method: isCod ? payment_method.CASH_ON_DELIVERY : payment_method.STRIPE,
           coupon_id: couponId,
+          shipping_country: address.country,
+          shipping_city: address.city,
+          shipping_area: address.area,
+          shipping_street: address.street,
+          shipping_building: address.building,
+          shipping_postal_code: address.postal_code,
         },
       });
 
@@ -726,6 +732,11 @@ export class OrdersService {
           tracking_number: dto.tracking_number || null,
           tracking_url: dto.tracking_url || null,
           delivery_notes: dto.delivery_notes || null,
+          shipping_country: dto.address?.country || 'UAE',
+          shipping_city: dto.address?.city || 'Dubai',
+          shipping_area: dto.address?.state || 'Dubai Central',
+          shipping_street: dto.address?.street || 'Manual Order Address',
+          shipping_postal_code: dto.address?.postal_code || '00000',
           items: {
             create: orderItemsToCreate,
           },
@@ -884,6 +895,35 @@ export class OrdersService {
 
       return updatedOrder;
     });
+  }
+
+  async updateOrderAddress(id: string, dto: UpdateOrderAddressDto) {
+    const order = await this.prisma.orders.findUnique({
+      where: { id },
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Order with ID ${id} not found`);
+    }
+
+    if (order.status !== order_status.PENDING) {
+      throw new BadRequestException('Order address can only be changed before the order is confirmed (status must be PENDING).');
+    }
+
+    const dataToUpdate: any = {};
+    if (dto.country !== undefined) dataToUpdate.shipping_country = dto.country?.trim() || null;
+    if (dto.city !== undefined) dataToUpdate.shipping_city = dto.city?.trim() || null;
+    if (dto.area !== undefined) dataToUpdate.shipping_area = dto.area?.trim() || null;
+    if (dto.street !== undefined) dataToUpdate.shipping_street = dto.street?.trim() || null;
+    if (dto.building !== undefined) dataToUpdate.shipping_building = dto.building?.trim() || null;
+    if (dto.postal_code !== undefined) dataToUpdate.shipping_postal_code = dto.postal_code?.trim() || null;
+
+    await this.prisma.orders.update({
+      where: { id },
+      data: dataToUpdate,
+    });
+
+    return this.findOne(id);
   }
 
   async onModuleInit() {

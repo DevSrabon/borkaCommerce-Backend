@@ -159,4 +159,28 @@ export class UpdateOrderItemsDto {
   discount?: number;
 }
 
+export class UpdateOrderAddressDto {
+  @IsOptional()
+  @IsString()
+  country?: string;
 
+  @IsOptional()
+  @IsString()
+  city?: string;
+
+  @IsOptional()
+  @IsString()
+  area?: string;
+
+  @IsOptional()
+  @IsString()
+  street?: string;
+
+  @IsOptional()
+  @IsString()
+  building?: string;
+
+  @IsOptional()
+  @IsString()
+  postal_code?: string;
+}

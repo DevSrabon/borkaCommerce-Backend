@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Put,
   Delete,
   Body,
   Param,
@@ -15,6 +16,8 @@ import {
   UpdateBlogDto,
   CreateBlogCommentDto,
   UpdateCommentStatusDto,
+  CreateBlogCategoryDto,
+  UpdateBlogCategoryDto,
 } from './dto/blogs.dto';
 import { AdminGuard } from '../auth/admin.guard';
 
@@ -71,14 +74,35 @@ export class BlogsController {
 
   @Get('admin/blogs/categories')
   @UseGuards(AdminGuard)
-  async adminGetCategories() {
-    return this.blogsService.getCategories();
+  async adminGetCategories(@Query('raw') raw?: string) {
+    if (raw === 'true') {
+      return this.blogsService.getCategories();
+    }
+    return this.blogsService.getCategoriesWithStats();
   }
 
   @Post('admin/blogs/categories')
   @UseGuards(AdminGuard)
-  async adminAddCategory(@Body('name') name: string) {
+  async adminAddCategory(@Body() body: any) {
+    const name = body?.name || body?.categoryName;
     return this.blogsService.addCategory(name);
+  }
+
+  @Patch('admin/blogs/categories')
+  @UseGuards(AdminGuard)
+  async adminUpdateCategory(@Body() body: any) {
+    const oldName = body?.oldName || body?.currentName;
+    const newName = body?.newName || body?.name;
+    return this.blogsService.updateCategory(oldName, newName);
+  }
+
+  @Put('admin/blogs/categories/:oldName')
+  @UseGuards(AdminGuard)
+  async adminUpdateCategoryByParam(
+    @Param('oldName') oldName: string,
+    @Body('newName') newName: string,
+  ) {
+    return this.blogsService.updateCategory(oldName, newName);
   }
 
   @Delete('admin/blogs/categories/:name')

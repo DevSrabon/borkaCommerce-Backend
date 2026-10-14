@@ -168,10 +168,14 @@ export class ProductsController {
     @Query('is_featured') isFeatured?: string,
     @Query('search') search?: string,
     @Query('on_sale') onSale?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
   ) {
     const featured = isFeatured === 'true' ? true : isFeatured === 'false' ? false : undefined;
     const saleOnly = onSale === 'true';
-    return this.productsService.findAllStorefront(categoryId, featured, search, saleOnly);
+    const pageNum = page ? parseInt(page, 10) : undefined;
+    const limitNum = limit ? parseInt(limit, 10) : undefined;
+    return this.productsService.findAllStorefront(categoryId, featured, search, saleOnly, pageNum, limitNum);
   }
 
   @Get('ecommerce/products/slug/:slug')

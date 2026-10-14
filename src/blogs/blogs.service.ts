@@ -264,36 +264,63 @@ export class BlogsService implements OnModuleInit {
   }
 
   async getCategories(): Promise<string[]> {
-    // 1. Find all distinct categories from blogs
+    const settingRow = await this.prisma.site_settings.findUnique({
+      where: { key: 'BLOG_CATEGORIES' },
+    });
+
+    if (settingRow?.value) {
+      try {
+        const parsed = JSON.parse(settingRow.value);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map((s: string) => s.trim()).filter(Boolean);
+        }
+      } catch {
+        const split = settingRow.value.split(',').map((s) => s.trim()).filter(Boolean);
+        if (split.length > 0) return split;
+      }
+    }
+
+    // Default categories if setting doesn't exist yet
     const blogCats = await this.prisma.blogs.findMany({
       select: { category: true },
       distinct: ['category'],
     });
 
-    // 2. Find any custom categories from site_settings
-    const settingRow = await this.prisma.site_settings.findUnique({
-      where: { key: 'BLOG_CATEGORIES' },
-    });
-    let customCats: string[] = [];
-    if (settingRow?.value) {
-      try {
-        customCats = JSON.parse(settingRow.value);
-      } catch {
-        customCats = settingRow.value.split(',').map((s) => s.trim());
-      }
-    }
-
-    // 3. Merge with default categories
     const defaultCats = ['Abaya', 'Bridal', 'Modest Fashion', 'Haute Couture', 'Styling Tips'];
     const combined = new Set<string>();
+    [...defaultCats, ...blogCats.map((b) => b.category)].forEach((c) => {
+      if (c && c.trim()) combined.add(c.trim());
+    });
+    const list = Array.from(combined);
 
-    [...defaultCats, ...customCats, ...blogCats.map((b) => b.category)].forEach((c) => {
-      if (c && c.trim()) {
-        combined.add(c.trim());
+    // Save initial set to site_settings so future updates/deletes are clean
+    await this.prisma.site_settings.upsert({
+      where: { key: 'BLOG_CATEGORIES' },
+      update: { value: JSON.stringify(list) },
+      create: { key: 'BLOG_CATEGORIES', value: JSON.stringify(list) },
+    }).catch(() => {});
+
+    return list;
+  }
+
+  async getCategoriesWithStats(): Promise<Array<{ name: string; count: number }>> {
+    const categories = await this.getCategories();
+    const blogCounts = await this.prisma.blogs.groupBy({
+      by: ['category'],
+      _count: { id: true },
+    });
+
+    const countMap = new Map<string, number>();
+    blogCounts.forEach((bc) => {
+      if (bc.category) {
+        countMap.set(bc.category.toLowerCase().trim(), bc._count.id);
       }
     });
 
-    return Array.from(combined);
+    return categories.map((cat) => ({
+      name: cat,
+      count: countMap.get(cat.toLowerCase().trim()) || 0,
+    }));
   }
 
   async addCategory(name: string): Promise<string[]> {
@@ -303,14 +330,66 @@ export class BlogsService implements OnModuleInit {
     }
 
     const categories = await this.getCategories();
-    if (!categories.some((c) => c.toLowerCase() === trimmed.toLowerCase())) {
-      categories.push(trimmed);
+    if (categories.some((c) => c.toLowerCase() === trimmed.toLowerCase())) {
+      throw new BadRequestException(`Category "${trimmed}" already exists`);
     }
+
+    categories.push(trimmed);
 
     await this.prisma.site_settings.upsert({
       where: { key: 'BLOG_CATEGORIES' },
       update: { value: JSON.stringify(categories) },
       create: { key: 'BLOG_CATEGORIES', value: JSON.stringify(categories) },
+    });
+
+    return categories;
+  }
+
+  async updateCategory(oldName: string, newName: string): Promise<string[]> {
+    const trimmedOld = oldName?.trim();
+    const trimmedNew = newName?.trim();
+
+    if (!trimmedOld || !trimmedNew) {
+      throw new BadRequestException('Both current and new category names are required');
+    }
+
+    let categories = await this.getCategories();
+    const index = categories.findIndex((c) => c.toLowerCase() === trimmedOld.toLowerCase());
+
+    if (index === -1) {
+      // If old category wasn't explicitly saved in settings, check if new name collides
+      const clash = categories.some((c) => c.toLowerCase() === trimmedNew.toLowerCase());
+      if (clash) {
+        throw new BadRequestException(`Category "${trimmedNew}" already exists`);
+      }
+      categories.push(trimmedNew);
+    } else {
+      // Check collision with another category
+      const clashIndex = categories.findIndex((c) => c.toLowerCase() === trimmedNew.toLowerCase());
+      if (clashIndex !== -1 && clashIndex !== index) {
+        throw new BadRequestException(`Category "${trimmedNew}" already exists`);
+      }
+      categories[index] = trimmedNew;
+    }
+
+    // 1. Update site_settings
+    await this.prisma.site_settings.upsert({
+      where: { key: 'BLOG_CATEGORIES' },
+      update: { value: JSON.stringify(categories) },
+      create: { key: 'BLOG_CATEGORIES', value: JSON.stringify(categories) },
+    });
+
+    // 2. Cascade update all existing blogs with this category
+    await this.prisma.blogs.updateMany({
+      where: {
+        category: {
+          equals: trimmedOld,
+          mode: 'insensitive',
+        },
+      },
+      data: {
+        category: trimmedNew,
+      },
     });
 
     return categories;

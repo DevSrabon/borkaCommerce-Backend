@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Body, Patch, Param, UseGuards, Req, Headers, BadRequestException, Delete } from '@nestjs/common';
 import { OrdersService } from './orders.service';
-import { CheckoutDto, UpdateOrderStatusDto, CreateManualOrderDto, UpdateOrderItemsDto } from './dto/orders.dto';
+import { CheckoutDto, UpdateOrderStatusDto, CreateManualOrderDto, UpdateOrderItemsDto, UpdateOrderAddressDto } from './dto/orders.dto';
 import { AuthGuard } from '../auth/auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -79,6 +79,12 @@ export class OrdersController {
   @Patch('admin/orders/:id/items')
   updateOrderItems(@Param('id') id: string, @Body() updateOrderItemsDto: UpdateOrderItemsDto) {
     return this.ordersService.updateOrderItems(id, updateOrderItemsDto);
+  }
+
+  @UseGuards(AdminGuard)
+  @Patch('admin/orders/:id/address')
+  updateOrderAddress(@Param('id') id: string, @Body() updateOrderAddressDto: UpdateOrderAddressDto) {
+    return this.ordersService.updateOrderAddress(id, updateOrderAddressDto);
   }
 
   @UseGuards(AdminGuard)

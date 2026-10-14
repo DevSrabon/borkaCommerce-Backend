@@ -4,15 +4,32 @@ import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import * as fs from 'fs';
 import { AdminGuard } from '../auth/admin.guard';
+import { UploadFilesService } from './upload-files.service';
 
 @Controller('admin/media')
 @UseGuards(AdminGuard)
 export class UploadsController {
+  constructor(private readonly uploadFilesService: UploadFilesService) {}
+
+  @Get('storage-status')
+  async getStorageStatus() {
+    return this.uploadFilesService.getStorageStatus();
+  }
+
+  @Post('migrate-to-cloudinary')
+  async migrateToCloudinary() {
+    return this.uploadFilesService.migrateToCloudinary();
+  }
+
+  @Post('migrate-to-local')
+  async migrateToLocal() {
+    return this.uploadFilesService.migrateToLocal();
+  }
 
   @Get()
   async getMedia() {
     const uploadsRoot = join(process.cwd(), 'uploads');
-    const folders = ['product', 'customer', 'banner', 'category', 'blog'];
+    const folders = ['product', 'customer', 'banner', 'category', 'blog', 'migrated'];
     const mediaList: { url: string; path: string; name: string; folder: string }[] = [];
 
     for (const folder of folders) {
@@ -38,7 +55,7 @@ export class UploadsController {
       }
     }
 
-    return mediaList.reverse(); // Latest uploads first (as files are named with timestamp prefix)
+    return mediaList.reverse(); // Latest uploads first
   }
 
   @Post('upload')
@@ -68,12 +85,9 @@ export class UploadsController {
       throw new BadRequestException('No file uploaded');
     }
     const queryFolder = folderQuery || 'product';
-    const allowed = ['product', 'customer', 'banner', 'category'];
+    const allowed = ['product', 'customer', 'banner', 'category', 'blog'];
     const folder = allowed.includes(queryFolder) ? queryFolder : 'product';
-    const relativePath = `/${folder}/${file.filename}`;
-    return {
-      imageUrl: `http://localhost:8080/uploads${relativePath}`,
-      imagePath: relativePath,
-    };
+
+    return this.uploadFilesService.processUploadedFile(folder, file.filename, file.path);
   }
 }

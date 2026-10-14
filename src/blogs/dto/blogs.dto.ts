@@ -95,3 +95,19 @@ export class UpdateCommentStatusDto {
   @IsIn(['APPROVED', 'REJECTED', 'PENDING'])
   status: 'APPROVED' | 'REJECTED' | 'PENDING';
 }
+
+export class CreateBlogCategoryDto {
+  @IsNotEmpty()
+  @IsString()
+  name: string;
+}
+
+export class UpdateBlogCategoryDto {
+  @IsNotEmpty()
+  @IsString()
+  oldName: string;
+
+  @IsNotEmpty()
+  @IsString()
+  newName: string;
+}

@@ -764,7 +764,14 @@ export class ProductsService {
 
   // --- STOREFRONT METHODS ---
 
-  async findAllStorefront(categoryId?: string, isFeatured?: boolean, search?: string, onSale?: boolean) {
+  async findAllStorefront(
+    categoryId?: string,
+    isFeatured?: boolean,
+    search?: string,
+    onSale?: boolean,
+    pageNum?: number,
+    limitNum?: number,
+  ) {
     const whereClause: any = {
       status: product_status.PUBLISHED,
       deleted_at: null,
@@ -952,11 +959,14 @@ export class ProductsService {
       };
     });
 
-    if (onSale) {
-      return mappedProducts.filter((p) => p.on_sale);
+    const finalResult = onSale ? mappedProducts.filter((p) => p.on_sale) : mappedProducts;
+
+    if (pageNum !== undefined && limitNum !== undefined && limitNum > 0) {
+      const start = (pageNum - 1) * limitNum;
+      return finalResult.slice(start, start + limitNum);
     }
 
-    return mappedProducts;
+    return finalResult;
   }
 
   async findOneStorefront(slug: string) {

@@ -36,6 +36,13 @@ export class CategoriesService {
     });
   }
 
+  async findAllActive() {
+    return this.prisma.categories.findMany({
+      where: { is_active: true },
+      orderBy: { sort_order: 'asc' },
+    });
+  }
+
   async getTree() {
     const allCategories = await this.prisma.categories.findMany({
       orderBy: { sort_order: 'asc' },
