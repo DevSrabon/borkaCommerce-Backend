@@ -139,3 +139,28 @@ export class SocialLoginDto {
   access_token?: string;
 }
 
+export class UpdateProfileDto {
+  @IsString()
+  @IsNotEmpty()
+  first_name: string;
+
+  @IsString()
+  @IsNotEmpty()
+  last_name: string;
+
+  @IsString()
+  @IsOptional()
+  phone?: string;
+}
+
+export class ChangePasswordDto {
+  @IsString()
+  @IsOptional()
+  current_password?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(6, { message: 'New password must be at least 6 characters long' })
+  new_password: string;
+}
+

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Patch, Param, Body, UseGuards } from '@nestjs/common';
 import { AddressesService } from './addresses.service';
 import { CreateAddressDto } from './dto/address.dto';
 import { AuthGuard } from '../auth/auth.guard';
@@ -18,4 +18,15 @@ export class AddressesController {
   findAll(@CurrentUser() customer: any) {
     return this.addressesService.findByCustomer(customer.id);
   }
+
+  @Delete(':id')
+  delete(@CurrentUser() customer: any, @Param('id') id: string) {
+    return this.addressesService.delete(customer.id, id);
+  }
+
+  @Patch(':id/default')
+  setDefault(@CurrentUser() customer: any, @Param('id') id: string) {
+    return this.addressesService.setDefault(customer.id, id);
+  }
 }
+

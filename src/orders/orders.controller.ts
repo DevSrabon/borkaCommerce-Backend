@@ -38,6 +38,12 @@ export class OrdersController {
     return order;
   }
 
+  @UseGuards(AuthGuard)
+  @Patch('ecommerce/orders/:id/cancel')
+  async cancelMyOrder(@Param('id') id: string, @CurrentUser() customer: any) {
+    return this.ordersService.customerCancelOrder(customer.id, id);
+  }
+
   // --- STRIPE DIRECT CONFIRMATION (Without Webhook) ---
   @Post('ecommerce/orders/confirm-stripe')
   async confirmStripeDirect(

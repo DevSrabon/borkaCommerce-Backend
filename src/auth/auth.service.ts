@@ -1,7 +1,7 @@
 import { Injectable, UnauthorizedException, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { MailService } from '../mail/mail.service';
-import { RegisterDto, LoginDto, CreateAdminDto, UpdateCustomerDto, VerifyOtpDto, ResendOtpDto, SocialLoginDto } from './dto/auth.dto';
+import { RegisterDto, LoginDto, CreateAdminDto, UpdateCustomerDto, VerifyOtpDto, ResendOtpDto, SocialLoginDto, UpdateProfileDto, ChangePasswordDto } from './dto/auth.dto';
 import * as crypto from 'crypto';
 
 @Injectable()
@@ -324,6 +324,68 @@ export class AuthService {
         email_verified: updated.email_verified,
         avatar_url: updated.avatar_url,
       },
+    };
+  }
+
+  async updateProfile(customerId: string, dto: UpdateProfileDto) {
+    const customer = await this.prisma.customers.findUnique({
+      where: { id: customerId },
+    });
+    if (!customer) {
+      throw new NotFoundException('Customer not found');
+    }
+
+    const updated = await this.prisma.customers.update({
+      where: { id: customerId },
+      data: {
+        first_name: dto.first_name.trim(),
+        last_name: dto.last_name.trim(),
+        phone: dto.phone !== undefined ? dto.phone.trim() : customer.phone,
+      },
+    });
+
+    return {
+      message: 'Profile updated successfully',
+      user: {
+        id: updated.id,
+        first_name: updated.first_name,
+        last_name: updated.last_name,
+        email: updated.email,
+        phone: updated.phone,
+        role: updated.role,
+        is_blocked: updated.is_blocked,
+        email_verified: updated.email_verified,
+        avatar_url: updated.avatar_url,
+      },
+    };
+  }
+
+  async changePassword(customerId: string, dto: ChangePasswordDto) {
+    const customer = await this.prisma.customers.findUnique({
+      where: { id: customerId },
+    });
+    if (!customer) {
+      throw new NotFoundException('Customer not found');
+    }
+
+    if (customer.password) {
+      if (!dto.current_password) {
+        throw new BadRequestException('Current password is required');
+      }
+      const isValid = this.verifyPassword(dto.current_password, customer.password);
+      if (!isValid) {
+        throw new BadRequestException('Current password is incorrect');
+      }
+    }
+
+    const hashedPassword = this.hashPassword(dto.new_password);
+    await this.prisma.customers.update({
+      where: { id: customerId },
+      data: { password: hashedPassword },
+    });
+
+    return {
+      message: 'Password changed successfully',
     };
   }
 

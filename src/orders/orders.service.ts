@@ -201,7 +201,7 @@ export class OrdersService {
           order_number: orderNumber,
           production_no: productionNo,
           customer_id: customerId,
-          status: isCod ? order_status.CONFIRMED : order_status.PENDING,
+          status: order_status.PENDING,
           subtotal: orderSubtotal,
           discount: orderDiscount,
           shipping: orderShipping,
@@ -538,6 +538,38 @@ export class OrdersService {
         }
       }
     });
+  }
+
+  async customerCancelOrder(customerId: string, orderId: string) {
+    const order = await this.prisma.orders.findUnique({
+      where: { id: orderId },
+      include: { items: true },
+    });
+
+    if (!order || order.customer_id !== customerId) {
+      throw new NotFoundException('Order not found or unauthorized access');
+    }
+
+    if (order.status === order_status.CANCELLED) {
+      throw new BadRequestException('Order is already cancelled');
+    }
+
+    // COD HOLE AND PENDING OR CONFIRM OBOSTAI USER CAILE NIJEI CANCEL KORTE PARBE
+    if (order.payment_method !== payment_method.CASH_ON_DELIVERY) {
+      throw new BadRequestException('Online payment orders cannot be self-cancelled. Please contact support via live chat for cancellation and refund.');
+    }
+
+    if (order.status !== order_status.PENDING && order.status !== order_status.CONFIRMED) {
+      throw new BadRequestException(`Order with status ${order.status} cannot be cancelled directly. Please contact support via live chat.`);
+    }
+
+    await this.cancelPayment(orderId);
+
+    return {
+      message: 'Order has been cancelled successfully',
+      order_id: orderId,
+      status: order_status.CANCELLED,
+    };
   }
 
   // --- NUMBER GENERATION HELPERS ---

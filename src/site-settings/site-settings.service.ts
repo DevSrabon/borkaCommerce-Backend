@@ -82,10 +82,13 @@ export class SiteSettingsService {
     AWS_S3_ACCESS_KEY_ID: process.env.AWS_S3_ACCESS_KEY_ID || '',
     AWS_S3_SECRET_ACCESS_KEY: process.env.AWS_S3_SECRET_ACCESS_KEY || '',
     AWS_S3_BUCKET_NAME: process.env.AWS_S3_BUCKET_NAME || '',
-    AWS_S3_PUBLIC_DOMAIN: process.env.AWS_S3_PUBLIC_DOMAIN || '',
-
     // Flash Sale Spotlight Configuration
     flash_sale_enabled: 'true',
+
+    // Tracking & Analytics
+    google_analytics_id: process.env.GOOGLE_ANALYTICS_ID || process.env.NEXT_PUBLIC_GA_ID || '',
+    facebook_pixel_id: process.env.FACEBOOK_PIXEL_ID || process.env.NEXT_PUBLIC_FB_PIXEL_ID || '',
+    google_search_console_tag: process.env.GOOGLE_SEARCH_CONSOLE_TAG || '',
 
     // Size Chart Configuration (Only file upload)
     size_chart_file: '',
@@ -337,6 +340,11 @@ export class SiteSettingsService {
     'size_chart_table',
     'BLOG_CATEGORIES',
     'CLOUDFLARE_TURNSTILE_SITE_KEY', // Only the public client site key
+    'google_analytics_id',
+    'facebook_pixel_id',
+    'google_search_console_tag',
+    'GOOGLE_ANALYTICS_ID',
+    'FACEBOOK_PIXEL_ID',
   ]);
 
   async getPublicSettings(): Promise<Record<string, string>> {

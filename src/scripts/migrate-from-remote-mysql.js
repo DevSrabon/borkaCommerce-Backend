@@ -530,7 +530,7 @@ async function main() {
       update: {
         title: rb.title_en,
         excerpt: rb.meta_description_en || rb.title_en,
-        content: rb.meta_description_en || rb.title_en,
+        content: rb.content_en || rb.meta_description_en || rb.title_en,
         featured_image: featuredImg,
         views: rb.views || 0,
         is_published: rb.status === 1,
@@ -540,7 +540,7 @@ async function main() {
         title: rb.title_en,
         slug,
         excerpt: rb.meta_description_en || rb.title_en,
-        content: rb.meta_description_en || rb.title_en,
+        content: rb.content_en || rb.meta_description_en || rb.title_en,
         featured_image: featuredImg,
         views: rb.views || 0,
         is_published: rb.status === 1,

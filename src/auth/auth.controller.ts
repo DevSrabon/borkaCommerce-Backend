@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Body, UseGuards, Delete, Param, Patch, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { RegisterDto, LoginDto, CreateAdminDto, UpdateCustomerDto, VerifyOtpDto, ResendOtpDto, SocialLoginDto } from './dto/auth.dto';
+import { RegisterDto, LoginDto, CreateAdminDto, UpdateCustomerDto, VerifyOtpDto, ResendOtpDto, SocialLoginDto, UpdateProfileDto, ChangePasswordDto } from './dto/auth.dto';
 import { AuthGuard } from './auth.guard';
 import { AdminGuard } from './admin.guard';
 import { CurrentUser } from './current-user.decorator';
@@ -77,6 +77,18 @@ export class AuthController {
       email_verified: customer.email_verified,
       avatar_url: customer.avatar_url,
     };
+  }
+
+  @UseGuards(AuthGuard)
+  @Patch('profile')
+  updateProfile(@CurrentUser() customer: any, @Body() dto: UpdateProfileDto) {
+    return this.authService.updateProfile(customer.id, dto);
+  }
+
+  @UseGuards(AuthGuard)
+  @Post('change-password')
+  changePassword(@CurrentUser() customer: any, @Body() dto: ChangePasswordDto) {
+    return this.authService.changePassword(customer.id, dto);
   }
 
   // --- ADMIN AUTH & CREATION ---

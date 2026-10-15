@@ -43,4 +43,23 @@ export class AddressesService {
       orderBy: { is_default: 'desc' },
     });
   }
+
+  async delete(customerId: string, addressId: string) {
+    return this.prisma.customer_addresses.deleteMany({
+      where: { id: addressId, customer_id: customerId },
+    });
+  }
+
+  async setDefault(customerId: string, addressId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.customer_addresses.updateMany({
+        where: { customer_id: customerId },
+        data: { is_default: false },
+      });
+      return tx.customer_addresses.updateMany({
+        where: { id: addressId, customer_id: customerId },
+        data: { is_default: true },
+      });
+    });
+  }
 }
