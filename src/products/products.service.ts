@@ -1402,5 +1402,257 @@ export class ProductsService {
 
     return `P${maxNum + 1}`;
   }
+
+  /**
+   * Seed realistic dummy abaya products (e.g. 50, 100, 200 items)
+   */
+  async seedDummyProducts(requestedCount = 50) {
+    const count = Math.min(Math.max(1, Number(requestedCount) || 50), 500);
+
+    // 1. Categories
+    const categories = await this.prisma.categories.findMany({ select: { id: true, name: true } });
+
+    // 2. Sample Image Pool from migrated database
+    const imageRows = await this.prisma.product_images.findMany({
+      take: 60,
+      select: { image_url: true },
+    });
+    const imagePool = imageRows.length > 0
+      ? imageRows.map((r) => r.image_url)
+      : [
+          'https://media.sabaalwadi.com/saba-media/product/1791910603708-360341774.png',
+          'https://media.sabaalwadi.com/saba-media/product/1791910603710-534125867.png',
+          'https://media.sabaalwadi.com/saba-media/product/1791910603710-850785002.png',
+        ];
+
+    // 3. Default Warehouse
+    let warehouse = await this.prisma.warehouses.findFirst();
+    if (!warehouse) {
+      warehouse = await this.prisma.warehouses.create({
+        data: { name: 'Main Dubai Warehouse', location: 'Dubai, UAE' },
+      });
+    }
+
+    // 4. Ensure Size attribute and values exist
+    const sizeAttr = await this.prisma.attributes.upsert({
+      where: { name: 'Size' },
+      create: { name: 'Size' },
+      update: {},
+    });
+
+    const sizes = ['52', '54', '56', '58'];
+    const sizeValueMap: Record<string, string> = {};
+    for (const size of sizes) {
+      const val = await this.prisma.attribute_values.upsert({
+        where: {
+          attribute_id_value: { attribute_id: sizeAttr.id, value: size },
+        },
+        create: { attribute_id: sizeAttr.id, value: size },
+        update: {},
+      });
+      sizeValueMap[size] = val.id;
+    }
+
+    // 5. Get current max product number
+    const rows = await this.prisma.products.findMany({
+      where: { product_number: { not: null } },
+      select: { product_number: true },
+    });
+    let maxNum = 1000;
+    for (const r of rows) {
+      if (!r.product_number) continue;
+      const match = r.product_number.match(/^P-?(\d+)$/i);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (!isNaN(num) && num > maxNum) maxNum = num;
+      }
+    }
+
+    const adjectives = [
+      'Royal', 'Luxe Dubai', 'Hand-Embroidered', 'Silk Crepe', 'Pearl Embellished',
+      'Classic Noir', 'Moroccan Flare', 'Velvet Trim', 'Pastel Blossom', 'Golden Thread',
+      'Midnight Lace', 'Ethereal Tiered', 'Organza Sheer', 'Modest Opulence', 'Arabian Glamour'
+    ];
+    const styles = [
+      'Nidha Abaya', 'Open Front Kimono', 'Kaftan Gown', 'Butterfly Cut Abaya',
+      'Double Layer Abaya', 'Formal Bisht', 'Pleated Dubai Abaya', 'Satin Wrap Abaya',
+      'Cascading Cape Abaya'
+    ];
+    const colors = [
+      'Midnight Black', 'Dusty Lavender', 'Royal Navy', 'Emerald Green',
+      'Champagne Beige', 'Burgundy Wine', 'Muted Sage', 'Rose Quartz', 'Desert Sand'
+    ];
+
+    const seededProductIds: string[] = [];
+
+    for (let i = 0; i < count; i++) {
+      const adj = adjectives[i % adjectives.length];
+      const style = styles[(i + 3) % styles.length];
+      const col = colors[(i + 5) % colors.length];
+      const name = `${adj} ${style} - ${col}`;
+      const productNumber = `P${maxNum + i + 1}`;
+      const uniqueSuffix = `${Date.now().toString(36)}-${i + 1}-${Math.random().toString(36).substring(2, 6)}`;
+      const slug = `dummy-abaya-${uniqueSuffix}`;
+
+      // 2-3 images
+      const img1 = imagePool[i % imagePool.length];
+      const img2 = imagePool[(i + 2) % imagePool.length];
+      const img3 = imagePool[(i + 5) % imagePool.length];
+      const assignedImages = [img1, img2, img3].filter(Boolean);
+
+      // Random price between 190 and 650 AED
+      const basePrice = 190 + ((i * 17) % 46) * 10;
+      const comparePrice = basePrice + 70 + ((i * 11) % 15) * 10;
+
+      // Random 1-2 categories
+      const chosenCatIds = categories.length > 0
+        ? [categories[i % categories.length].id]
+        : [];
+      if (categories.length > 1 && (i % 2 === 0)) {
+        const secondCat = categories[(i + 1) % categories.length].id;
+        if (!chosenCatIds.includes(secondCat)) chosenCatIds.push(secondCat);
+      }
+
+      // Create Product
+      const product = await this.prisma.products.create({
+        data: {
+          product_number: productNumber,
+          name,
+          slug,
+          description: `<p>Experience the timeless grace and modest elegance of the <strong>${name}</strong>. Crafted from premium breathable luxury fabrics tailored for royal Dubai occasions, everyday modest wear, and celebratory gatherings.</p><p>Features intricate detailing, tailored comfort, and exquisite drape.</p>`,
+          short_description: `Luxury ${style} tailored in ${col} with premium modest finishing.`,
+          sku_prefix: `DUMMY-${productNumber}`,
+          tags: `dummy, modest, abaya, ${col.toLowerCase()}, luxury`,
+          status: product_status.PUBLISHED,
+          is_featured: i % 5 === 0,
+          is_cod_allowed: true,
+          published_at: new Date(),
+        },
+      });
+
+      seededProductIds.push(product.id);
+
+      // Connect categories
+      if (chosenCatIds.length > 0) {
+        await this.prisma.product_categories.createMany({
+          data: chosenCatIds.map((cid) => ({
+            product_id: product.id,
+            category_id: cid,
+          })),
+        });
+      }
+
+      // Add product images
+      await this.prisma.product_images.createMany({
+        data: assignedImages.map((url, idx) => ({
+          product_id: product.id,
+          image_url: url,
+          alt_text: `${name} view ${idx + 1}`,
+          is_thumbnail: idx === 0,
+          sort_order: idx,
+        })),
+      });
+
+      // Add size variants
+      for (const size of sizes) {
+        const variantSku = `DUMMY-${productNumber}-SZ${size}`;
+        const stockQty = 15 + ((i + parseInt(size, 10)) % 25);
+
+        const variant = await this.prisma.product_variants.create({
+          data: {
+            product_id: product.id,
+            sku: variantSku,
+            price: basePrice,
+            compare_price: comparePrice,
+            cost_price: Math.round(basePrice * 0.45),
+            status: variant_status.ACTIVE,
+          },
+        });
+
+        // Map Size attribute
+        if (sizeValueMap[size]) {
+          await this.prisma.variant_attribute_values.create({
+            data: {
+              variant_id: variant.id,
+              attribute_value_id: sizeValueMap[size],
+            },
+          });
+        }
+
+        // Warehouse inventory
+        if (warehouse) {
+          await this.prisma.inventory.create({
+            data: {
+              variant_id: variant.id,
+              warehouse_id: warehouse.id,
+              quantity: stockQty,
+              available_quantity: stockQty,
+            },
+          });
+        }
+      }
+    }
+
+    return {
+      success: true,
+      count: seededProductIds.length,
+      message: `Successfully inserted ${seededProductIds.length} dummy products with size variants, stock inventory, and high-res imagery!`,
+    };
+  }
+
+  /**
+   * Delete ALL dummy products without touching real inventory or products
+   */
+  async purgeDummyProducts() {
+    const dummyProducts = await this.prisma.products.findMany({
+      where: {
+        OR: [
+          { tags: { contains: 'dummy' } },
+          { slug: { startsWith: 'dummy-' } },
+        ],
+      },
+      select: { id: true },
+    });
+
+    const productIds = dummyProducts.map((p) => p.id);
+    if (productIds.length === 0) {
+      return {
+        success: true,
+        deleted_count: 0,
+        message: 'No dummy products found to delete. Real products remain untouched.',
+      };
+    }
+
+    const variants = await this.prisma.product_variants.findMany({
+      where: { product_id: { in: productIds } },
+      select: { id: true },
+    });
+    const variantIds = variants.map((v) => v.id);
+
+    if (variantIds.length > 0) {
+      await this.prisma.cart_items.deleteMany({ where: { variant_id: { in: variantIds } } });
+      await this.prisma.order_items.deleteMany({ where: { variant_id: { in: variantIds } } });
+      await this.prisma.inventory.deleteMany({ where: { variant_id: { in: variantIds } } });
+      await this.prisma.variant_attribute_values.deleteMany({ where: { variant_id: { in: variantIds } } });
+      await this.prisma.variant_images.deleteMany({ where: { variant_id: { in: variantIds } } });
+      await this.prisma.product_variants.deleteMany({ where: { id: { in: variantIds } } });
+    }
+
+    await this.prisma.product_categories.deleteMany({ where: { product_id: { in: productIds } } });
+    await this.prisma.product_related_categories.deleteMany({ where: { product_id: { in: productIds } } });
+    await this.prisma.product_images.deleteMany({ where: { product_id: { in: productIds } } });
+    await this.prisma.wishlists.deleteMany({ where: { product_id: { in: productIds } } });
+    await this.prisma.reviews.deleteMany({ where: { product_id: { in: productIds } } });
+
+    const result = await this.prisma.products.deleteMany({
+      where: { id: { in: productIds } },
+    });
+
+    return {
+      success: true,
+      deleted_count: result.count,
+      message: `Successfully deleted all ${result.count} dummy products. All real store products are safe.`,
+    };
+  }
 }
 

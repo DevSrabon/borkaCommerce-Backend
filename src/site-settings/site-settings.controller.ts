@@ -29,7 +29,7 @@ export class StorefrontSiteController {
 
   @Get('site-settings')
   getSettings() {
-    return this.svc.getAllSettings();
+    return this.svc.getPublicSettings();
   }
 
   @Get('shipping-calculator')

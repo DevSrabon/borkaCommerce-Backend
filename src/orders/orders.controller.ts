@@ -38,6 +38,17 @@ export class OrdersController {
     return order;
   }
 
+  // --- STRIPE DIRECT CONFIRMATION (Without Webhook) ---
+  @Post('ecommerce/orders/confirm-stripe')
+  async confirmStripeDirect(
+    @Body() body: { order_id: string; payment_intent_id?: string },
+  ) {
+    if (!body?.order_id) {
+      throw new BadRequestException('order_id is required');
+    }
+    return this.ordersService.confirmStripeDirect(body.order_id, body.payment_intent_id);
+  }
+
   // --- STRIPE WEBHOOK ---
   @Post('ecommerce/orders/stripe-webhook')
   async stripeWebhook(@Req() req: any, @Headers('stripe-signature') signature: string) {

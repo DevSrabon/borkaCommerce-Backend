@@ -18,7 +18,6 @@ export class SiteSettingsService {
   // Default fallback values matching .env lines 4-23 & delivery configuration
   private readonly defaultSettings: Record<string, string> = {
     STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY || '',
-    STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET || 'whsec_mock',
     ADMIN_EMAILS: process.env.ADMIN_EMAILS || 'admin@example.com,srabon@example.com',
 
     SMTP_HOST: process.env.SMTP_HOST || 'smtp.gmail.com',
@@ -57,6 +56,12 @@ export class SiteSettingsService {
 
     // Stock Configuration
     low_stock_threshold: '5',
+    show_stock_quantity: 'true',
+    show_stock_badge: 'true',
+
+    // WhatsApp Order Configuration
+    whatsapp_order_enabled: 'true',
+    whatsapp_order_number: '+971 55 642 4758',
 
     // Asset Storage Driver Configuration (local vs cloudinary vs r2 vs s3)
     STORAGE_DRIVER: process.env.STORAGE_DRIVER || 'local',
@@ -288,7 +293,62 @@ export class SiteSettingsService {
     return this.prisma.banners.delete({ where: { id } });
   }
 
-  // ─── Site Settings ───────────────────────────────────────────────────────
+  // Allowed public keys for Storefront / Guest visitors (Secrets NEVER exposed)
+  private readonly publicSettingKeys = new Set([
+    'site_name',
+    'site_tagline',
+    'logo_url',
+    'favicon_url',
+    'footer_logo_url',
+    'footer_about_text',
+    'footer_phone_1',
+    'footer_phone_2',
+    'footer_phone_3',
+    'footer_phone_4',
+    'footer_email',
+    'footer_hours_sat_thu',
+    'footer_hours_fri',
+    'footer_address_1',
+    'footer_address_2',
+    'footer_address_3',
+    'footer_branches_json',
+    'social_facebook',
+    'social_instagram',
+    'social_youtube',
+    'social_pinterest',
+    'social_tiktok',
+    'seo_title',
+    'seo_description',
+    'seo_keywords',
+    'shipping_base_fee',
+    'free_shipping_threshold',
+    'shipping_discount_min_order',
+    'shipping_discount_type',
+    'shipping_discount_value',
+    'flash_sale_enabled',
+    'low_stock_threshold',
+    'show_stock_quantity',
+    'show_stock_badge',
+    'whatsapp_order_enabled',
+    'whatsapp_order_number',
+    'size_chart_file',
+    'size_chart_image',
+    'size_chart_guide_text',
+    'size_chart_table',
+    'BLOG_CATEGORIES',
+    'CLOUDFLARE_TURNSTILE_SITE_KEY', // Only the public client site key
+  ]);
+
+  async getPublicSettings(): Promise<Record<string, string>> {
+    const all = await this.getAllSettings();
+    const publicSettings: Record<string, string> = {};
+    for (const key of Object.keys(all)) {
+      if (this.publicSettingKeys.has(key)) {
+        publicSettings[key] = all[key];
+      }
+    }
+    return publicSettings;
+  }
 
   async getAllSettings(): Promise<Record<string, string>> {
     const rows = await this.prisma.site_settings.findMany();

@@ -165,6 +165,19 @@ export class ProductsController {
   }
 
   @UseGuards(AdminGuard)
+  @Post('admin/products/dummy/seed')
+  seedDummyProducts(@Body() body: { count?: number }) {
+    const count = body?.count ? Number(body.count) : 50;
+    return this.productsService.seedDummyProducts(count);
+  }
+
+  @UseGuards(AdminGuard)
+  @Delete('admin/products/dummy/purge')
+  purgeDummyProducts() {
+    return this.productsService.purgeDummyProducts();
+  }
+
+  @UseGuards(AdminGuard)
   @Get('admin/products/:id')
   findOneAdmin(@Param('id') id: string) {
     return this.productsService.findOne(id);
