@@ -274,7 +274,14 @@ export class ProductsService {
 
   async findOne(id: string) {
     const product = await this.prisma.products.findFirst({
-      where: { id, deleted_at: null },
+      where: {
+        OR: [
+          { id },
+          { slug: id },
+          { product_number: id },
+        ],
+        deleted_at: null,
+      },
       include: {
         product_categories: {
           include: { category: true },

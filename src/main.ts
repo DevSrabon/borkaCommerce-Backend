@@ -2,6 +2,8 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { LoggerService } from './logger/logger.service';
+import { AllExceptionsFilter } from './logger/all-exceptions.filter';
 import * as express from 'express';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -33,6 +35,10 @@ async function bootstrap() {
       forbidNonWhitelisted: true,
     }),
   );
+
+  // Register Global Exception Filter to capture error stack traces for Logger
+  const loggerService = app.get(LoggerService);
+  app.useGlobalFilters(new AllExceptionsFilter(loggerService));
 
   // Enable CORS for frontend integration
   app.enableCors({

@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Delete,
   Body,
   Param,
   Query,
@@ -168,5 +169,17 @@ export class ChatController {
   @UseGuards(AdminGuard)
   async markAdminRead(@Param('sessionId') sessionId: string) {
     return this.chatService.markAsRead(sessionId, 'ADMIN');
+  }
+
+  @Delete('admin/chat/sessions/:sessionId')
+  @UseGuards(AdminGuard)
+  async deleteSession(@Param('sessionId') sessionId: string) {
+    return this.chatService.deleteSession(sessionId);
+  }
+
+  @Delete('admin/chat/sessions')
+  @UseGuards(AdminGuard)
+  async deleteAllSessions() {
+    return this.chatService.deleteAllSessions();
   }
 }

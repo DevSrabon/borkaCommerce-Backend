@@ -395,8 +395,11 @@ export class AuthService {
         key: {
           in: [
             'GOOGLE_CLIENT_ID',
+            'google_client_id',
             'FACEBOOK_APP_ID',
+            'facebook_app_id',
             'CLOUDFLARE_TURNSTILE_SITE_KEY',
+            'cloudflare_turnstile_site_key',
           ],
         },
       },
@@ -408,11 +411,12 @@ export class AuthService {
 
     return {
       google_client_id:
-        map['GOOGLE_CLIENT_ID'] || process.env.GOOGLE_CLIENT_ID || '',
+        map['GOOGLE_CLIENT_ID'] || map['google_client_id'] || process.env.GOOGLE_CLIENT_ID || '',
       facebook_app_id:
-        map['FACEBOOK_APP_ID'] || process.env.FACEBOOK_APP_ID || '',
+        map['FACEBOOK_APP_ID'] || map['facebook_app_id'] || process.env.FACEBOOK_APP_ID || '',
       cloudflare_turnstile_site_key:
         map['CLOUDFLARE_TURNSTILE_SITE_KEY'] ||
+        map['cloudflare_turnstile_site_key'] ||
         process.env.CLOUDFLARE_TURNSTILE_SITE_KEY ||
         '1x00000000000000000000AA',
     };
@@ -502,6 +506,7 @@ export class AuthService {
           is_blocked: true,
           email_verified: true,
           created_at: true,
+          addresses: true,
           _count: {
             select: {
               orders: true,

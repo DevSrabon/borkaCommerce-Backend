@@ -419,4 +419,294 @@ export class LoggerService implements INestLoggerService {
       message: `Successfully cleared Winston log files in ${this.logDir}`,
     };
   }
+
+  // ─── Record Enterprise Audit Log (POST, UPDATE, DELETE with Full Payloads) ───
+
+  async recordAuditLog(entry: {
+    method: string;
+    route: string;
+    statusCode: number;
+    ip?: string;
+    payload?: any;
+    userEmail?: string;
+    userId?: string;
+    userName?: string;
+    action?: string;
+    entity?: string;
+    details?: string;
+    userAgent?: string;
+  }) {
+    if (!entry) return;
+
+    const upperMethod = (entry.method || '').toUpperCase();
+    const route = entry.route || '';
+
+    // Only audit mutating actions or login
+    if (!['POST', 'PUT', 'PATCH', 'DELETE', 'LOGIN'].includes(upperMethod) && entry.action !== 'LOGIN') {
+      return;
+    }
+
+    // Skip chat heartbeat/typing/read-receipts and logs routes
+    if (
+      route.includes('/logs') ||
+      route.startsWith('/admin/logs') ||
+      route.includes('heartbeat') ||
+      route.includes('typing') ||
+      route.includes('/chat/mark-read')
+    ) {
+      return;
+    }
+
+    // Infer Action
+    let action = entry.action || 'MUTATION';
+    if (upperMethod === 'LOGIN' || route.includes('/login')) {
+      action = 'LOGIN';
+    } else if (upperMethod === 'DELETE') {
+      action = 'DELETE';
+    } else if (upperMethod === 'PATCH' || upperMethod === 'PUT') {
+      action = 'UPDATE';
+    } else if (upperMethod === 'POST') {
+      if (
+        route.includes('status') ||
+        route.includes('cancel') ||
+        route.includes('update') ||
+        route.includes('clear')
+      ) {
+        action = 'UPDATE';
+      } else {
+        action = 'CREATE';
+      }
+    }
+
+    // Determine Entity name
+    let entity = entry.entity || 'SYSTEM';
+    const lowerRoute = route.toLowerCase();
+    if (action === 'LOGIN' || lowerRoute.includes('auth') || lowerRoute.includes('login')) entity = 'AUTH';
+    else if (lowerRoute.includes('blog')) entity = 'BLOG';
+    else if (lowerRoute.includes('product')) entity = 'PRODUCT';
+    else if (lowerRoute.includes('order')) entity = 'ORDER';
+    else if (lowerRoute.includes('categor')) entity = 'CATEGORY';
+    else if (lowerRoute.includes('attribute')) entity = 'ATTRIBUTE';
+    else if (lowerRoute.includes('banner')) entity = 'BANNER';
+    else if (lowerRoute.includes('review')) entity = 'REVIEW';
+    else if (lowerRoute.includes('setting')) entity = 'SETTINGS';
+    else if (lowerRoute.includes('customer')) entity = 'CUSTOMER';
+    else if (lowerRoute.includes('offer') || lowerRoute.includes('campaign') || lowerRoute.includes('coupon')) entity = 'OFFER';
+    else if (lowerRoute.includes('inventory')) entity = 'INVENTORY';
+    else if (lowerRoute.includes('partner') || lowerRoute.includes('courier')) entity = 'DELIVERY_PARTNER';
+    else if (lowerRoute.includes('chat')) entity = 'CHAT';
+
+    const p = entry.payload && typeof entry.payload === 'object' ? entry.payload : {};
+    const userName = entry.userName || (entry.userEmail ? entry.userEmail.split('@')[0].toUpperCase() : 'SABA AL WADI');
+
+    // Generate human-readable details
+    let details = entry.details;
+    if (!details) {
+      if (action === 'LOGIN' || lowerRoute.includes('/login')) {
+        details = `Login an Admin user, Name: ${userName}`;
+      } else if (entity === 'BLOG') {
+        if (action === 'CREATE') {
+          details = `Created a Blog: ${p.title || p.name || 'New Best Abaya Shop in Dubai: 7 Magnificent Reasons to Visit Our Shop'}`;
+        } else if (action === 'UPDATE') {
+          details = `Updated a Blog: ${p.title || p.name || 'Blog Post'}`;
+        } else {
+          details = `Deleted a Blog Post`;
+        }
+      } else if (entity === 'PRODUCT') {
+        if (action === 'CREATE') {
+          details = `Created a Product: ${p.name || p.title || 'Luxury Abaya Collection'}`;
+        } else if (action === 'UPDATE') {
+          details = `Updated a Product: ${p.name || p.title || 'Product Details'}`;
+        } else {
+          details = `Deleted a Product`;
+        }
+      } else if (entity === 'ORDER') {
+        if (action === 'CREATE') {
+          details = `Created Manual Order${p.order_number ? ' #' + p.order_number : ''}${p.total ? ' (AED ' + p.total + ')' : ''}`;
+        } else if (action === 'UPDATE') {
+          details = `Updated Order${p.order_status ? ': Status -> ' + p.order_status : ''}${p.tracking_number ? ' (AWB: ' + p.tracking_number + ')' : ''}`;
+        } else {
+          details = `Cancelled an Order`;
+        }
+      } else if (entity === 'CATEGORY') {
+        if (action === 'CREATE') {
+          details = `Created Category: ${p.name || 'New Category'}`;
+        } else if (action === 'UPDATE') {
+          details = `Updated Category: ${p.name || 'Category'}`;
+        } else {
+          details = `Deleted Category`;
+        }
+      } else if (entity === 'BANNER') {
+        if (action === 'CREATE') {
+          details = `Created a Banner: ${p.title || 'New Banner'}`;
+        } else if (action === 'UPDATE') {
+          details = `Updated a Banner: ${p.title || 'Banner'}`;
+        } else {
+          details = `Deleted a Banner`;
+        }
+      } else if (entity === 'SETTINGS') {
+        details = `Updated Site Settings: ${p.key || (Object.keys(p).length > 0 ? Object.keys(p).slice(0, 3).join(', ') : 'Site Configuration')}`;
+      } else if (entity === 'CUSTOMER') {
+        details = `${action === 'CREATE' ? 'Created' : 'Updated'} Customer: ${p.first_name ? p.first_name + ' ' + (p.last_name || '') : (p.email || 'Customer Profile')}`;
+      } else if (entity === 'OFFER') {
+        details = `${action === 'CREATE' ? 'Created' : 'Updated'} Promotion: ${p.code || p.name || 'Discount Offer'}`;
+      } else if (entity === 'DELIVERY_PARTNER') {
+        details = `${action === 'CREATE' ? 'Created' : 'Updated'} Delivery Partner: ${p.name || 'Partner'}`;
+      } else {
+        const entityLabel = entity.charAt(0).toUpperCase() + entity.slice(1).toLowerCase();
+        const name = p.name || p.title || p.label || '';
+        details = `${action === 'CREATE' ? 'Created a' : action === 'UPDATE' ? 'Updated' : 'Deleted'} ${entityLabel}${name ? ': ' + name : ''}`;
+      }
+    }
+
+    const payloadStr =
+      entry.payload != null
+        ? typeof entry.payload === 'string'
+          ? entry.payload
+          : JSON.stringify(entry.payload, null, 2)
+        : null;
+
+    const status = entry.statusCode < 400 ? 'Active' : 'Failed';
+
+    try {
+      await (this.prisma as any).audit_logs.create({
+        data: {
+          user_id: entry.userId || null,
+          user_email: entry.userEmail || null,
+          user_name: userName,
+          action,
+          entity,
+          method: upperMethod,
+          route,
+          ip: entry.ip || null,
+          status,
+          status_code: entry.statusCode,
+          payload: payloadStr,
+          details,
+        },
+      });
+    } catch (err: any) {
+      this.error(`Failed to record audit log: ${err.message}`);
+    }
+  }
+
+  async getAuditLogs(query: {
+    page?: number;
+    limit?: number;
+    action?: string;
+    method?: string;
+    entity?: string;
+    search?: string;
+  }) {
+    const page = Math.max(1, query.page || 1);
+    const limit = Math.min(100, Math.max(1, query.limit || 25));
+    const skip = (page - 1) * limit;
+
+    const where: any = {};
+    if (query.action && query.action !== 'ALL') {
+      where.action = query.action;
+    }
+    if (query.method && query.method !== 'ALL') {
+      where.method = query.method.toUpperCase();
+    }
+    if (query.entity && query.entity !== 'ALL') {
+      where.entity = query.entity.toUpperCase();
+    }
+    if (query.search?.trim()) {
+      const q = query.search.trim();
+      where.OR = [
+        { route: { contains: q, mode: 'insensitive' } },
+        { user_email: { contains: q, mode: 'insensitive' } },
+        { details: { contains: q, mode: 'insensitive' } },
+        { payload: { contains: q, mode: 'insensitive' } },
+      ];
+    }
+
+    const [items, total] = await Promise.all([
+      (this.prisma as any).audit_logs.findMany({
+        where,
+        orderBy: { created_at: 'desc' },
+        skip,
+        take: limit,
+      }),
+      (this.prisma as any).audit_logs.count({ where }),
+    ]);
+
+    return {
+      items,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit) || 1,
+    };
+  }
+
+  async getAuditLogById(id: string) {
+    return (this.prisma as any).audit_logs.findUnique({
+      where: { id },
+    });
+  }
+
+  async clearAuditLogs() {
+    await (this.prisma as any).audit_logs.deleteMany();
+    return { success: true, message: 'All audit trail logs cleared successfully.' };
+  }
+
+  // ─── STRIPE API & PAYMENT EVENT LOGS ──────────────────────────────────────────
+
+  async getStripeLogs(query: {
+    page?: number;
+    limit?: number;
+    status?: string;
+    eventType?: string;
+    search?: string;
+  }) {
+    const page = Math.max(1, query.page || 1);
+    const limit = Math.min(100, Math.max(1, query.limit || 25));
+    const skip = (page - 1) * limit;
+
+    const where: any = {};
+    if (query.status && query.status !== 'ALL') {
+      where.status = query.status.toUpperCase();
+    }
+    if (query.eventType && query.eventType !== 'ALL') {
+      where.event_type = query.eventType;
+    }
+    if (query.search?.trim()) {
+      const q = query.search.trim();
+      where.OR = [
+        { order_id: { contains: q, mode: 'insensitive' } },
+        { customer_id: { contains: q, mode: 'insensitive' } },
+        { event_type: { contains: q, mode: 'insensitive' } },
+        { error_message: { contains: q, mode: 'insensitive' } },
+        { error_code: { contains: q, mode: 'insensitive' } },
+        { request_data: { contains: q, mode: 'insensitive' } },
+        { response_data: { contains: q, mode: 'insensitive' } },
+      ];
+    }
+
+    const [items, total] = await Promise.all([
+      (this.prisma as any).stripe_logs.findMany({
+        where,
+        orderBy: { created_at: 'desc' },
+        skip,
+        take: limit,
+      }),
+      (this.prisma as any).stripe_logs.count({ where }),
+    ]);
+
+    return {
+      items,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit) || 1,
+    };
+  }
+
+  async clearStripeLogs() {
+    await (this.prisma as any).stripe_logs.deleteMany();
+    return { success: true, message: 'All Stripe API & payment logs cleared successfully.' };
+  }
 }
+

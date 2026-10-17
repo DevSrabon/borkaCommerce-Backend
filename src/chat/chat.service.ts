@@ -1,6 +1,7 @@
 import { Injectable, HttpException, HttpStatus, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { MailService } from '../mail/mail.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 
 interface RateLimitBucket {
   timestamps: number[];
@@ -32,6 +33,7 @@ export class ChatService {
   constructor(
     private prisma: PrismaService,
     private mailService: MailService,
+    private realtimeGateway: RealtimeGateway,
   ) {}
 
   /**
@@ -293,6 +295,9 @@ export class ChatService {
       },
     });
 
+    // Real-Time Socket.IO broadcast
+    this.realtimeGateway.emitChatMessage(sessionId, customerMsg);
+
     // 5. Intelligent FAQ auto-guidance bot response
     const msgText = (message || '').toLowerCase();
     let botReply = '';
@@ -305,7 +310,7 @@ export class ChatService {
     }
 
     if (botReply) {
-      await this.prisma.chat_messages.create({
+      const botMsg = await this.prisma.chat_messages.create({
         data: {
           session_id: sessionId,
           sender_type: 'BOT',
@@ -313,6 +318,7 @@ export class ChatService {
           message: botReply,
         },
       });
+      this.realtimeGateway.emitChatMessage(sessionId, botMsg);
     }
 
     // 6. Automated Missed Chat Alert to Admins via Email
@@ -424,6 +430,9 @@ export class ChatService {
         );
     }
 
+    // Real-Time Socket.IO broadcast to customer & admin
+    this.realtimeGateway.emitChatMessage(sessionId, adminMsg);
+
     return adminMsg;
   }
 
@@ -442,10 +451,25 @@ export class ChatService {
         ? { is_customer_typing: isTyping }
         : { is_admin_typing: isTyping };
 
-    return this.prisma.chat_sessions.update({
+    const updated = await this.prisma.chat_sessions.update({
       where: { session_id: sessionId },
       data,
     });
+
+    try {
+      this.realtimeGateway.server?.to(`session_${sessionId}`).emit('chat_typing', {
+        session_id: sessionId,
+        is_typing: isTyping,
+        sender_type: senderType,
+      });
+      this.realtimeGateway.server?.to('admin').emit('chat_typing', {
+        session_id: sessionId,
+        is_typing: isTyping,
+        sender_type: senderType,
+      });
+    } catch (_) {}
+
+    return updated;
   }
 
   /**
@@ -512,4 +536,51 @@ export class ChatService {
     });
     return { unread_total: aggregate._sum.unread_admin_count || 0 };
   }
+
+  /**
+   * Delete single chat session and its messages
+   */
+  async deleteSession(sessionId: string) {
+    await this.prisma.chat_messages.deleteMany({
+      where: { session_id: sessionId },
+    });
+
+    const deleted = await this.prisma.chat_sessions.deleteMany({
+      where: { session_id: sessionId },
+    });
+
+    this.customerActivityMap.delete(sessionId);
+    this.sessionRateMap.delete(sessionId);
+    this.sessionLastEmailedMap.delete(sessionId);
+    this.sessionLastInactiveNoticeMap.delete(sessionId);
+
+    this.realtimeGateway.emitSessionDeleted(sessionId);
+    const unread = await this.getAdminUnreadTotal();
+    this.realtimeGateway.emitUnreadCount(unread.unread_total);
+
+    return { success: true, session_id: sessionId, deleted_count: deleted.count };
+  }
+
+  /**
+   * Delete ALL chat sessions and their messages
+   */
+  async deleteAllSessions() {
+    const deletedMsgs = await this.prisma.chat_messages.deleteMany({});
+    const deletedSessions = await this.prisma.chat_sessions.deleteMany({});
+
+    this.customerActivityMap.clear();
+    this.sessionRateMap.clear();
+    this.sessionLastEmailedMap.clear();
+    this.sessionLastInactiveNoticeMap.clear();
+
+    this.realtimeGateway.emitAllSessionsDeleted();
+    this.realtimeGateway.emitUnreadCount(0);
+
+    return {
+      success: true,
+      deleted_sessions: deletedSessions.count,
+      deleted_messages: deletedMsgs.count,
+    };
+  }
 }
+

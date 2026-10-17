@@ -23,9 +23,11 @@ export class AdminGuard extends AuthGuard {
     }
 
     // 2. Check if user has role ADMIN or matches dynamic admin email list
+    const hardcodedAdmins = ['admin@example.com', 'srabon@example.com'];
     const dbAdminRow = await this.prismaService.site_settings.findUnique({ where: { key: 'ADMIN_EMAILS' } });
-    const adminEmailsEnv = dbAdminRow?.value || process.env.ADMIN_EMAILS || 'admin@example.com,srabon@example.com';
-    const adminEmails = adminEmailsEnv.split(',').map((email) => email.trim().toLowerCase());
+    const adminEmailsEnv = dbAdminRow?.value || process.env.ADMIN_EMAILS || '';
+    const configuredEmails = adminEmailsEnv.split(',').map((email) => email.trim().toLowerCase()).filter(Boolean);
+    const adminEmails = [...new Set([...hardcodedAdmins, ...configuredEmails])];
 
     const isAdmin = user.role === 'ADMIN' || adminEmails.includes(user.email.toLowerCase());
 

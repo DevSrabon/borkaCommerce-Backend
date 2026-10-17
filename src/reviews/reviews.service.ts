@@ -2,10 +2,16 @@ import { Injectable, BadRequestException, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../database/prisma.service';
 import { CreateReviewDto } from './dto/reviews.dto';
 import { review_status } from '@prisma/client';
+import { NotificationsService } from '../notifications/notifications.service';
+import { MailService } from '../mail/mail.service';
 
 @Injectable()
 export class ReviewsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private notificationsService: NotificationsService,
+    private mailService: MailService,
+  ) {}
 
   async checkPurchaseEligibility(customerId: string, productId: string) {
     // 1. Verify if customer has bought any variant of this product in a valid order
@@ -53,10 +59,12 @@ export class ReviewsService {
       throw new BadRequestException('Only customers who have purchased this product can leave a review.');
     }
 
+    let reviewRecord: any;
+
     // Check if review already exists for this user and product
     if (eligibility.existing_review) {
       // Update existing review
-      return this.prisma.reviews.update({
+      reviewRecord = await this.prisma.reviews.update({
         where: { id: eligibility.existing_review.id },
         data: {
           rating: dto.rating,
@@ -69,23 +77,43 @@ export class ReviewsService {
           },
         },
       });
+    } else {
+      // Create new review
+      reviewRecord = await this.prisma.reviews.create({
+        data: {
+          customer_id: customerId,
+          product_id: dto.product_id,
+          rating: dto.rating,
+          review: dto.review || null,
+          status: review_status.APPROVED,
+        },
+        include: {
+          customer: {
+            select: { id: true, first_name: true, last_name: true },
+          },
+        },
+      });
     }
 
-    // Create new review
-    return this.prisma.reviews.create({
-      data: {
-        customer_id: customerId,
-        product_id: dto.product_id,
-        rating: dto.rating,
-        review: dto.review || null,
-        status: review_status.APPROVED,
-      },
-      include: {
-        customer: {
-          select: { id: true, first_name: true, last_name: true },
+    // Dispatch real-time admin notification and email
+    try {
+      const customerName = `${reviewRecord.customer?.first_name || 'Customer'} ${reviewRecord.customer?.last_name || ''}`.trim();
+      await this.notificationsService.createNotification({
+        type: 'REVIEW',
+        title: 'New Product Review',
+        message: `${customerName} rated ${dto.rating}★ on "${product.name}"${dto.review ? `: "${dto.review.slice(0, 80)}"` : ''}`,
+        link: '/admin/reviews',
+        metadata: {
+          product_id: product.id,
+          product_name: product.name,
+          rating: dto.rating,
+          customer_name: customerName,
         },
-      },
-    });
+      });
+      await this.mailService.sendAdminNewReviewNotification(reviewRecord, product);
+    } catch (_) {}
+
+    return reviewRecord;
   }
 
   async getProductReviews(productId: string) {

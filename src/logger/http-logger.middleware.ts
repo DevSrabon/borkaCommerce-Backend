@@ -72,6 +72,16 @@ export class HttpLoggerMiddleware implements NestMiddleware {
         return;
       }
 
+      // Extract error stack from request/response if set by exception filter or handlers
+      const errorStack =
+        (req as any)._errorStack ||
+        (res as any)._errorStack ||
+        (res as any).locals?.errorStack ||
+        ((req as any)._error?.stack) ||
+        (res.statusCode >= 500
+          ? `HTTP ${res.statusCode} Error: ${(req as any)._error?.message || 'Server error occurred during request processing'}`
+          : undefined);
+
       this.loggerService.recordHttpLog({
         method,
         route,
@@ -81,7 +91,78 @@ export class HttpLoggerMiddleware implements NestMiddleware {
         query: query ? decodeURIComponent(query) : undefined,
         payload,
         userAgent,
+        errorStack: errorStack || undefined,
       });
+
+      // Extract Authenticated User from req.user or Authorization header
+      const user = (req as any).user;
+      let userEmail: string | undefined = user?.email;
+      let userId: string | undefined = user?.id;
+      let userName: string | undefined =
+        user?.name ||
+        (user?.first_name ? `${user.first_name} ${user.last_name || ''}`.trim() : undefined);
+
+      const authHeader = headers['authorization'];
+      if (!userEmail && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+        try {
+          const parts = authHeader.split(' ')[1].split('.');
+          if (parts.length === 3) {
+            const decoded = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+            userEmail = decoded.email;
+            userId = decoded.id || decoded.sub;
+            userName = decoded.name || decoded.userName;
+          }
+        } catch (_) {}
+      }
+
+      // Check for Admin / Customer Login event
+      const isLoginRoute =
+        route.endsWith('/auth/login') ||
+        route.includes('/login') ||
+        route.includes('/ecommerce/auth/login');
+
+      if (isLoginRoute && res.statusCode < 400 && upperMethod === 'POST') {
+        const loginEmail = userEmail || payload?.email || 'admin@sabaalwadi.com';
+        const loginName = userName || payload?.name || (payload?.email ? payload.email.split('@')[0].toUpperCase() : 'SABA AL WADI');
+        this.loggerService.recordAuditLog({
+          method: 'LOGIN',
+          route,
+          statusCode: res.statusCode,
+          ip: (headers['x-forwarded-for'] as string) || ip || req.socket.remoteAddress,
+          payload,
+          userEmail: loginEmail,
+          userId,
+          userName: loginName,
+          action: 'LOGIN',
+          entity: 'AUTH',
+          userAgent,
+        });
+        return;
+      }
+
+      // Skip noisy non-administrative routes
+      if (
+        route.includes('/chat/mark-read') ||
+        route.includes('/typing') ||
+        (route.includes('/chat/message') && !route.startsWith('/admin'))
+      ) {
+        return;
+      }
+
+      // Record Enterprise Audit Trail for all mutating operations (POST, UPDATE, DELETE)
+      if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(upperMethod)) {
+        this.loggerService.recordAuditLog({
+          method: upperMethod,
+          route,
+          statusCode: res.statusCode,
+          ip: (headers['x-forwarded-for'] as string) || ip || req.socket.remoteAddress,
+          payload,
+          userEmail,
+          userId,
+          userName: userName || 'SABA AL WADI',
+          userAgent,
+        });
+      }
     });
 
     next();

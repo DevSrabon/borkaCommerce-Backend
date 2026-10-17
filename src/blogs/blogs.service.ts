@@ -12,11 +12,18 @@ function slugify(text: string): string {
     .replace(/\-\-+/g, '-');
 }
 
+import { NotificationsService } from '../notifications/notifications.service';
+import { MailService } from '../mail/mail.service';
+
 @Injectable()
 export class BlogsService implements OnModuleInit {
   private readonly logger = new Logger(BlogsService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private notificationsService: NotificationsService,
+    private mailService: MailService,
+  ) {}
 
   async onModuleInit() {
     await this.seedInitialBlogsIfEmpty();
@@ -258,6 +265,23 @@ export class BlogsService implements OnModuleInit {
         status: 'PENDING', // Requires admin approval
       },
     });
+
+    // Dispatch real-time admin notification and email
+    try {
+      await this.notificationsService.createNotification({
+        type: 'BLOG_COMMENT',
+        title: 'New Blog Comment',
+        message: `${dto.author_name.trim()} commented on "${blog.title}": "${dto.content.trim().slice(0, 80)}"`,
+        link: '/admin/blogs',
+        metadata: {
+          blog_id: blog.id,
+          blog_title: blog.title,
+          author_name: dto.author_name.trim(),
+          author_email: dto.author_email.trim(),
+        },
+      });
+      await this.mailService.sendAdminNewBlogCommentNotification(comment, blog);
+    } catch (_) {}
 
     return {
       message: 'Comment submitted successfully! It will appear once approved by admin.',

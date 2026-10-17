@@ -1,8 +1,9 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { PromotionsService } from '../promotions/promotions.service';
 import { MailService } from '../mail/mail.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CheckoutDto, UpdateOrderStatusDto, CreateManualOrderDto, UpdateOrderItemsDto, UpdateOrderAddressDto } from './dto/orders.dto';
 import { order_status, payment_status, payment_method, inventory_transaction_type, offer_status } from '@prisma/client';
 import Stripe from 'stripe';
@@ -22,13 +23,16 @@ export const CURRENCY_RATES: Record<string, number> = {
 };
 
 @Injectable()
-export class OrdersService {
+export class OrdersService implements OnModuleInit {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(
     private prisma: PrismaService,
     private configService: ConfigService,
     private promotionsService: PromotionsService,
     private mailService: MailService,
     private siteSettingsService: SiteSettingsService,
+    private notificationsService: NotificationsService,
   ) {}
 
   private async getStripeClient(): Promise<Stripe> {
@@ -37,6 +41,64 @@ export class OrdersService {
       this.configService.get<string>('STRIPE_SECRET_KEY') ||
       'sk_test_mock';
     return new Stripe(key);
+  }
+
+  async recordStripeLog(entry: {
+    eventType: string;
+    orderId?: string | null;
+    customerId?: string | null;
+    status: 'SUCCESS' | 'FAILED' | 'PENDING';
+    amount?: number | null;
+    currency?: string | null;
+    errorCode?: string | null;
+    errorMessage?: string | null;
+    requestData?: any;
+    responseData?: any;
+  }) {
+    try {
+      let formattedResponseData: string | null = null;
+      if (entry.responseData !== undefined && entry.responseData !== null) {
+        if (typeof entry.responseData === 'string') {
+          formattedResponseData = entry.responseData;
+        } else if (entry.responseData instanceof Error || (entry.responseData as any).raw) {
+          const rawPayload = (entry.responseData as any).raw || {};
+          formattedResponseData = JSON.stringify(
+            {
+              error_type: (entry.responseData as any).type,
+              error_code: (entry.responseData as any).code,
+              error_message: (entry.responseData as any).message,
+              status_code: (entry.responseData as any).statusCode,
+              param: (entry.responseData as any).param,
+              decline_code: (entry.responseData as any).decline_code,
+              doc_url: (entry.responseData as any).doc_url,
+              raw: rawPayload,
+              ...entry.responseData,
+            },
+            null,
+            2,
+          );
+        } else {
+          formattedResponseData = JSON.stringify(entry.responseData, null, 2);
+        }
+      }
+
+      await (this.prisma as any).stripe_logs.create({
+        data: {
+          event_type: entry.eventType,
+          order_id: entry.orderId || null,
+          customer_id: entry.customerId || null,
+          status: entry.status,
+          amount: entry.amount !== undefined && entry.amount !== null ? Number(entry.amount) : null,
+          currency: entry.currency || null,
+          error_code: entry.errorCode || null,
+          error_message: entry.errorMessage || null,
+          request_data: entry.requestData ? (typeof entry.requestData === 'string' ? entry.requestData : JSON.stringify(entry.requestData, null, 2)) : null,
+          response_data: formattedResponseData,
+        },
+      });
+    } catch (e: any) {
+      this.logger.error(`Failed to record stripe_log: ${e.message}`);
+    }
   }
 
   async checkout(customerId: string, dto: CheckoutDto) {
@@ -70,6 +132,13 @@ export class OrdersService {
               include: { offer: true },
             },
             inventories: true,
+            attributes: {
+              include: {
+                attribute_value: {
+                  include: { attribute: true },
+                },
+              },
+            },
           },
         });
 
@@ -120,11 +189,16 @@ export class OrdersService {
         const itemSubtotal = finalPrice * itemDto.quantity;
         subtotal += itemSubtotal;
 
+        const attrSummary = (variant.attributes || [])
+          .map((a: any) => `${a.attribute_value?.attribute?.name || 'Option'}: ${a.attribute_value?.value || ''}`)
+          .filter(Boolean)
+          .join(', ');
+
         // Snapshot details for order item creation
         orderItemsToCreate.push({
           variant_id: variant.id,
           product_name: variant.product.name,
-          variant_name: variant.sku, // representation details
+          variant_name: attrSummary || variant.sku,
           sku: variant.sku,
           price: finalPrice,
           quantity: itemDto.quantity,
@@ -232,8 +306,8 @@ export class OrdersService {
       });
 
       // 7. Payment processing
-      let clientSecret = '';
-      let paymentIntentId = '';
+      let checkoutUrl = '';
+      let stripeSessionId = '';
 
       if (isCod) {
         // Cash on delivery payment record
@@ -248,27 +322,79 @@ export class OrdersService {
           },
         });
       } else {
-        // Stripe payment intent flow with DYNAMIC CURRENCY
+        // Stripe Hosted Checkout Session flow (safe, avoids raw card errors, 3D secure ready)
         try {
           const stripeClient = await this.getStripeClient();
-          // Stripe expects amount in smallest currency unit (cents, fils, pence)
           const stripeAmount = Math.max(50, Math.round(orderTotal * 100));
 
-          const paymentIntent = await stripeClient.paymentIntents.create({
-            amount: stripeAmount,
-            currency: selectedCurrency.toLowerCase(),
+          const customer = await tx.customers.findUnique({
+            where: { id: customerId },
+            select: { email: true, first_name: true, last_name: true },
+          });
+
+          const storeUrl =
+            (dto.origin && dto.origin.trim()) ||
+            (await this.siteSettingsService.getSetting('STOREFRONT_URL')) ||
+            process.env.STOREFRONT_URL ||
+            'http://localhost:3000';
+
+          const session = await stripeClient.checkout.sessions.create({
+            payment_method_types: ['card'],
+            line_items: [
+              {
+                price_data: {
+                  currency: selectedCurrency.toLowerCase(),
+                  product_data: {
+                    name: `Saba Al Wadi - Order #${order.order_number}`,
+                    description: `${orderItemsToCreate.length} luxury modest garment(s)`,
+                  },
+                  unit_amount: stripeAmount,
+                },
+                quantity: 1,
+              },
+            ],
+            mode: 'payment',
+            customer_email: customer?.email || undefined,
+            client_reference_id: order.id,
             metadata: {
               order_id: order.id,
+              order_number: order.order_number,
               customer_id: customerId,
-              selected_currency: selectedCurrency,
+              currency: selectedCurrency,
               base_total_aed: total.toString(),
-              exchange_rate: rate.toString(),
             },
+            expires_at: Math.floor(Date.now() / 1000) + (30 * 60), // Expires after 30 minutes!
+            success_url: `${storeUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}&order_id=${order.id}`,
+            cancel_url: `${storeUrl}/checkout/payment-retry?order_id=${order.id}&cancelled=true`,
           });
-          clientSecret = paymentIntent.client_secret || '';
-          paymentIntentId = paymentIntent.id;
+
+          checkoutUrl = session.url || '';
+          stripeSessionId = session.id;
+
+          await this.recordStripeLog({
+            eventType: 'CREATE_CHECKOUT_SESSION',
+            orderId: order.id,
+            customerId,
+            status: 'SUCCESS',
+            amount: orderTotal,
+            currency: selectedCurrency,
+            requestData: { amount: stripeAmount, currency: selectedCurrency.toLowerCase(), order_id: order.id },
+            responseData: session,
+          });
         } catch (stripeErr: any) {
-          throw new BadRequestException(`Stripe PaymentIntent generation failed: ${stripeErr.message}`);
+          await this.recordStripeLog({
+            eventType: 'CREATE_CHECKOUT_SESSION',
+            orderId: order.id,
+            customerId,
+            status: 'FAILED',
+            amount: orderTotal,
+            currency: selectedCurrency,
+            errorCode: stripeErr.code || stripeErr.type || 'CHECKOUT_SESSION_ERROR',
+            errorMessage: stripeErr.message,
+            requestData: { amount: Math.max(50, Math.round(orderTotal * 100)), currency: selectedCurrency.toLowerCase(), order_id: order.id },
+            responseData: stripeErr.raw || stripeErr,
+          });
+          throw new BadRequestException(`Stripe Checkout Session generation failed: ${stripeErr.message}`);
         }
 
         // Create Stripe Payment Audit Record in selected currency
@@ -276,10 +402,11 @@ export class OrdersService {
           data: {
             order_id: order.id,
             provider: 'STRIPE',
-            provider_payment_intent: paymentIntentId,
+            provider_payment_intent: stripeSessionId,
             amount: orderTotal,
             currency: selectedCurrency,
             status: payment_status.PENDING,
+            response_json: { session_id: stripeSessionId, checkout_url: checkoutUrl } as any,
           },
         });
       }
@@ -289,31 +416,49 @@ export class OrdersService {
         order_number: order.order_number,
         total: order.total,
         currency: order.currency,
-        client_secret: clientSecret,
+        checkout_url: checkoutUrl,
+        session_id: stripeSessionId,
         payment_method: order.payment_method,
       };
     });
 
-    // Send asynchronous confirmation email to customer + new order alert to admin
-    try {
-      const fullOrder = await this.prisma.orders.findUnique({
-        where: { id: result.order_id },
-        include: {
-          customer: true,
-          items: true,
-        },
-      });
+    // Send confirmation email only for COD orders immediately. For Stripe, sent after verification!
+    if (result.payment_method === payment_method.CASH_ON_DELIVERY) {
+      try {
+        const fullOrder = await this.prisma.orders.findUnique({
+          where: { id: result.order_id },
+          include: {
+            customer: true,
+            items: true,
+          },
+        });
 
-      if (fullOrder && fullOrder.customer) {
-        await this.mailService.sendOrderConfirmation(
-          fullOrder.customer.email,
-          fullOrder.customer.first_name,
-          fullOrder,
-        );
-        await this.mailService.sendAdminNewOrderNotification(fullOrder);
+        if (fullOrder && fullOrder.customer) {
+          await this.mailService.sendOrderConfirmation(
+            fullOrder.customer.email,
+            fullOrder.customer.first_name,
+            fullOrder,
+          );
+          await this.mailService.sendAdminNewOrderNotification(fullOrder);
+        }
+
+        // Real-time notification for admin panel
+        await this.notificationsService.createNotification({
+          type: 'ORDER',
+          title: 'New Customer Order (COD)',
+          message: `Order #${result.order_number} placed by ${fullOrder?.customer?.first_name || 'Customer'} (${result.currency} ${result.total})`,
+          link: `/admin/orders/${result.order_id}`,
+          metadata: {
+            order_id: result.order_id,
+            order_number: result.order_number,
+            total: result.total,
+            currency: result.currency,
+            customer_name: `${fullOrder?.customer?.first_name || ''} ${fullOrder?.customer?.last_name || ''}`.trim(),
+          },
+        });
+      } catch (err: any) {
+        // non-blocking
       }
-    } catch (err: any) {
-      // non-blocking
     }
 
     return result;
@@ -331,10 +476,29 @@ export class OrdersService {
         'whsec_mock';
       event = stripeClient.webhooks.constructEvent(payload, signature, webhookSecret);
     } catch (err: any) {
+      await this.recordStripeLog({
+        eventType: 'WEBHOOK_EVENT',
+        status: 'FAILED',
+        errorCode: 'WEBHOOK_SIGNATURE_FAILED',
+        errorMessage: err.message,
+        responseData: err.raw || err,
+      });
       throw new BadRequestException(`Webhook signature verification failed: ${err.message}`);
     }
 
     const paymentIntent = event.data.object as Stripe.PaymentIntent;
+
+    await this.recordStripeLog({
+      eventType: `WEBHOOK_${event.type.toUpperCase().replace(/\./g, '_')}`,
+      orderId: paymentIntent?.metadata?.order_id || null,
+      customerId: paymentIntent?.metadata?.customer_id || null,
+      status: event.type.includes('fail') ? 'FAILED' : 'SUCCESS',
+      amount: paymentIntent?.amount ? paymentIntent.amount / 100 : undefined,
+      currency: paymentIntent?.currency,
+      errorCode: (paymentIntent?.last_payment_error as any)?.code || null,
+      errorMessage: (paymentIntent?.last_payment_error as any)?.message || null,
+      responseData: event,
+    });
 
     if (event.type === 'payment_intent.succeeded') {
       const orderId = paymentIntent.metadata.order_id;
@@ -352,10 +516,21 @@ export class OrdersService {
   }
 
   /**
-   * Directly verifies and confirms Stripe payment from backend using STRIPE_SECRET_KEY,
-   * without requiring any webhooks!
+   * Strictly verifies and confirms Stripe payment directly using STRIPE_SECRET_KEY.
+   * If card details are supplied, creates a PaymentMethod with Stripe and confirms the intent.
+   * Throws an error if Stripe declines the card or authorization fails.
    */
-  async confirmStripeDirect(orderId: string, paymentIntentId?: string) {
+  async confirmStripeDirect(
+    orderId: string,
+    paymentIntentId?: string,
+    card?: {
+      number: string;
+      exp_month: string | number;
+      exp_year: string | number;
+      cvc: string;
+      name?: string;
+    },
+  ) {
     const order = await this.prisma.orders.findUnique({
       where: { id: orderId },
       include: { customer: true, items: true },
@@ -375,32 +550,188 @@ export class OrdersService {
       };
     }
 
-    let verifiedChargeId = 'ch_direct_confirmed';
-    let intentId = paymentIntentId;
+    const stripeClient = await this.getStripeClient();
+    let verifiedChargeId = '';
+    let intentId = paymentIntentId || '';
 
-    try {
-      const stripeClient = await this.getStripeClient();
+    // If card details were submitted, process real charge via Stripe
+    if (card && card.number) {
+      const cleanNumber = String(card.number).replace(/\s+/g, '');
+      if (cleanNumber.length < 13 || cleanNumber.length > 19) {
+        await this.recordStripeLog({
+          eventType: 'CONFIRM_DIRECT_CARD',
+          orderId: order.id,
+          customerId: order.customer_id,
+          status: 'FAILED',
+          amount: Number(order.total),
+          currency: order.currency,
+          errorCode: 'INVALID_CARD_NUMBER',
+          errorMessage: 'Invalid card number length.',
+        });
+        throw new BadRequestException('Invalid card number. Please check your credit/debit card number.');
+      }
+      if (!card.exp_month || !card.exp_year || !card.cvc) {
+        await this.recordStripeLog({
+          eventType: 'CONFIRM_DIRECT_CARD',
+          orderId: order.id,
+          customerId: order.customer_id,
+          status: 'FAILED',
+          amount: Number(order.total),
+          currency: order.currency,
+          errorCode: 'MISSING_CARD_DETAILS',
+          errorMessage: 'Card expiry date or CVC missing.',
+        });
+        throw new BadRequestException('Card expiry date (MM/YY) and CVC are required.');
+      }
 
-      if (paymentIntentId && !paymentIntentId.startsWith('pi_mock')) {
-        // Query Stripe directly via secret key
+      const expMonth = Number(card.exp_month);
+      let expYear = Number(card.exp_year);
+      if (expYear < 100) expYear += 2000;
+
+      try {
+        // 1. Create PaymentMethod on Stripe
+        const paymentMethod = await stripeClient.paymentMethods.create({
+          type: 'card',
+          card: {
+            number: cleanNumber,
+            exp_month: expMonth,
+            exp_year: expYear,
+            cvc: String(card.cvc).trim(),
+          },
+          billing_details: {
+            name: card.name || `${order.customer.first_name} ${order.customer.last_name}`,
+            email: order.customer.email,
+          },
+        });
+
+        // 2. Attach to PaymentIntent and confirm
+        if (!paymentIntentId) {
+          throw new BadRequestException('PaymentIntent ID is required for Stripe card confirmation.');
+        }
+
+        const confirmed = await stripeClient.paymentIntents.confirm(paymentIntentId, {
+          payment_method: paymentMethod.id,
+        });
+
+        if (confirmed.status !== 'succeeded') {
+          await this.recordStripeLog({
+            eventType: 'CONFIRM_DIRECT_CARD',
+            orderId: order.id,
+            customerId: order.customer_id,
+            status: 'FAILED',
+            amount: Number(order.total),
+            currency: order.currency,
+            errorCode: 'STATUS_NOT_SUCCEEDED',
+            errorMessage: `Card authorization status: ${confirmed.status}.`,
+            requestData: { paymentIntentId, cardLast4: cleanNumber.slice(-4) },
+            responseData: { status: confirmed.status },
+          });
+          throw new BadRequestException(
+            `Card authorization status: ${confirmed.status}. Payment was not completed.`
+          );
+        }
+
+        verifiedChargeId = (confirmed.latest_charge as string) || `ch_${confirmed.id}`;
+        intentId = confirmed.id;
+
+        await this.recordStripeLog({
+          eventType: 'CONFIRM_DIRECT_CARD',
+          orderId: order.id,
+          customerId: order.customer_id,
+          status: 'SUCCESS',
+          amount: Number(order.total),
+          currency: order.currency,
+          requestData: { paymentIntentId, cardLast4: cleanNumber.slice(-4), cardExp: `${expMonth}/${expYear}` },
+          responseData: confirmed,
+        });
+      } catch (stripeErr: any) {
+        this.logger.error(`Stripe payment failure for Order #${order.order_number}: ${stripeErr.message}`);
+        await this.recordStripeLog({
+          eventType: 'CONFIRM_DIRECT_CARD',
+          orderId: order.id,
+          customerId: order.customer_id,
+          status: 'FAILED',
+          amount: Number(order.total),
+          currency: order.currency,
+          errorCode: stripeErr.code || stripeErr.decline_code || stripeErr.type || 'CARD_DECLINED',
+          errorMessage: stripeErr.message,
+          requestData: { paymentIntentId, cardLast4: cleanNumber.slice(-4) },
+          responseData: stripeErr.raw || stripeErr,
+        });
+        throw new BadRequestException(stripeErr.message || 'Payment card declined by issuer. Please check details or use another card.');
+      }
+    } else if (paymentIntentId) {
+      // Check existing PaymentIntent status directly with Stripe
+      try {
         const paymentIntent = await stripeClient.paymentIntents.retrieve(paymentIntentId);
-
-        // If requires confirmation or payment method attached
         if (paymentIntent.status === 'requires_confirmation') {
           const confirmedIntent = await stripeClient.paymentIntents.confirm(paymentIntentId);
-          verifiedChargeId = (confirmedIntent.latest_charge as string) || verifiedChargeId;
+          if (confirmedIntent.status !== 'succeeded') {
+            await this.recordStripeLog({
+              eventType: 'CONFIRM_PAYMENT_INTENT',
+              orderId: order.id,
+              customerId: order.customer_id,
+              status: 'FAILED',
+              amount: Number(order.total),
+              currency: order.currency,
+              errorCode: 'STATUS_NOT_SUCCEEDED',
+              errorMessage: `Stripe PaymentIntent status is ${confirmedIntent.status}, not succeeded.`,
+              responseData: { status: confirmedIntent.status },
+            });
+            throw new BadRequestException(`Stripe PaymentIntent status is ${confirmedIntent.status}, not succeeded.`);
+          }
+          verifiedChargeId = (confirmedIntent.latest_charge as string) || `ch_${confirmedIntent.id}`;
+          intentId = confirmedIntent.id;
         } else if (paymentIntent.status === 'succeeded') {
-          verifiedChargeId = (paymentIntent.latest_charge as string) || verifiedChargeId;
+          verifiedChargeId = (paymentIntent.latest_charge as string) || `ch_${paymentIntent.id}`;
+          intentId = paymentIntent.id;
+        } else {
+          await this.recordStripeLog({
+            eventType: 'CONFIRM_PAYMENT_INTENT',
+            orderId: order.id,
+            customerId: order.customer_id,
+            status: 'FAILED',
+            amount: Number(order.total),
+            currency: order.currency,
+            errorCode: 'STATUS_NOT_SUCCEEDED',
+            errorMessage: `Stripe payment is not completed (current status: ${paymentIntent.status}).`,
+            responseData: { status: paymentIntent.status },
+          });
+          throw new BadRequestException(`Stripe payment is not completed (current status: ${paymentIntent.status}).`);
         }
+
+        await this.recordStripeLog({
+          eventType: 'CONFIRM_PAYMENT_INTENT',
+          orderId: order.id,
+          customerId: order.customer_id,
+          status: 'SUCCESS',
+          amount: Number(order.total),
+          currency: order.currency,
+          requestData: { paymentIntentId },
+          responseData: { intentId, chargeId: verifiedChargeId, status: paymentIntent.status },
+        });
+      } catch (stripeErr: any) {
+        await this.recordStripeLog({
+          eventType: 'CONFIRM_PAYMENT_INTENT',
+          orderId: order.id,
+          customerId: order.customer_id,
+          status: 'FAILED',
+          amount: Number(order.total),
+          currency: order.currency,
+          errorCode: stripeErr.code || stripeErr.type || 'PAYMENT_INTENT_ERROR',
+          errorMessage: stripeErr.message,
+          requestData: { paymentIntentId },
+        });
+        throw new BadRequestException(stripeErr.message || 'Unable to verify Stripe payment intent.');
       }
-    } catch (stripeErr: any) {
-      console.warn('Direct Stripe retrieval notice:', stripeErr.message);
+    } else {
+      throw new BadRequestException('Card details or valid Stripe Payment Intent ID is required.');
     }
 
-    // Immediately execute payment confirmation in database
+    // Only reached if Stripe confirmed payment status as 'succeeded'!
     await this.confirmPayment(
       order.id,
-      intentId || `pi_direct_${Date.now()}`,
+      intentId,
       verifiedChargeId,
       { source: 'backend_direct_stripe_secret_key', timestamp: new Date().toISOString() },
     );
@@ -420,7 +751,7 @@ export class OrdersService {
 
     return {
       success: true,
-      message: 'Payment verified and order confirmed directly via Stripe Secret Key.',
+      message: 'Payment verified and order confirmed directly via Stripe.',
       order: updatedOrder,
     };
   }
@@ -554,9 +885,9 @@ export class OrdersService {
       throw new BadRequestException('Order is already cancelled');
     }
 
-    // COD HOLE AND PENDING OR CONFIRM OBOSTAI USER CAILE NIJEI CANCEL KORTE PARBE
-    if (order.payment_method !== payment_method.CASH_ON_DELIVERY) {
-      throw new BadRequestException('Online payment orders cannot be self-cancelled. Please contact support via live chat for cancellation and refund.');
+    // If order was already paid, require live chat support
+    if (order.payment_method !== payment_method.CASH_ON_DELIVERY && order.payment_status === payment_status.PAID) {
+      throw new BadRequestException('Paid orders cannot be self-cancelled. Please contact support via live chat for cancellation and refund.');
     }
 
     if (order.status !== order_status.PENDING && order.status !== order_status.CONFIRMED) {
@@ -572,17 +903,431 @@ export class OrdersService {
     };
   }
 
+  /**
+   * Automatically cancels any Stripe order that remains in unpaid (PENDING) status
+   * after 30 minutes, restoring the reserved inventory.
+   */
+  async cancelExpiredUnpaidOrders(): Promise<number> {
+    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+    const expiredOrders = await this.prisma.orders.findMany({
+      where: {
+        payment_method: payment_method.STRIPE,
+        payment_status: payment_status.PENDING,
+        status: order_status.PENDING,
+        created_at: { lt: thirtyMinutesAgo },
+      },
+      select: { id: true, order_number: true, customer_id: true },
+    });
+
+    if (expiredOrders.length === 0) return 0;
+
+    let cancelledCount = 0;
+    for (const exp of expiredOrders) {
+      try {
+        await this.cancelPayment(exp.id);
+        await this.recordStripeLog({
+          eventType: 'ORDER_EXPIRED_CANCELLED',
+          orderId: exp.id,
+          customerId: exp.customer_id,
+          status: 'FAILED',
+          errorMessage: `Order #${exp.order_number} automatically cancelled because payment was not completed within 30 minutes.`,
+        });
+        cancelledCount++;
+        this.logger.log(`Auto-cancelled expired unpaid Stripe order #${exp.order_number} after 30 minutes.`);
+      } catch (err: any) {
+        this.logger.error(`Error auto-cancelling order #${exp.order_number}: ${err.message}`);
+      }
+    }
+
+    return cancelledCount;
+  }
+
+  /**
+   * Verifies Stripe Checkout Session, marks order as CONFIRMED/PAID,
+   * deducts physical inventory, and sends confirmation emails to customer and admin.
+   */
+  async verifyStripeSession(sessionId: string, orderId?: string) {
+    const stripeClient = await this.getStripeClient();
+    const session = await stripeClient.checkout.sessions.retrieve(sessionId);
+
+    const targetOrderId = orderId || session.client_reference_id || (session.metadata?.order_id as string);
+    if (!targetOrderId) {
+      throw new BadRequestException('Order ID could not be identified from Stripe session.');
+    }
+
+    const order = await this.prisma.orders.findUnique({
+      where: { id: targetOrderId },
+      include: { customer: true, items: true },
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Order not found for ID: ${targetOrderId}`);
+    }
+
+    if (session.payment_status === 'paid') {
+      if (order.payment_status !== payment_status.PAID) {
+        await this.prisma.$transaction(async (tx) => {
+          await tx.orders.update({
+            where: { id: order.id },
+            data: {
+              status: order_status.CONFIRMED,
+              payment_status: payment_status.PAID,
+            },
+          });
+
+          await tx.payments.updateMany({
+            where: { order_id: order.id },
+            data: {
+              status: payment_status.PAID,
+              paid_at: new Date(),
+              provider_charge_id: (session.payment_intent as string) || session.id,
+              response_json: {
+                session_id: session.id,
+                payment_intent: session.payment_intent,
+                status: session.status,
+                payment_status: session.payment_status,
+              } as any,
+            },
+          });
+
+          // Physically deduct stock and release reservation
+          for (const item of order.items) {
+            const inventories = await tx.inventory.findMany({
+              where: { variant_id: item.variant_id },
+            });
+
+            let remainingToDeduct = item.quantity;
+            for (const inv of inventories) {
+              if (remainingToDeduct <= 0) break;
+              const toDeduct = Math.min(inv.reserved_quantity, remainingToDeduct);
+              if (toDeduct > 0) {
+                await tx.inventory.update({
+                  where: { id: inv.id },
+                  data: {
+                    quantity: { decrement: toDeduct },
+                    reserved_quantity: { decrement: toDeduct },
+                  },
+                });
+
+                await tx.inventory_transactions.create({
+                  data: {
+                    variant_id: item.variant_id,
+                    warehouse_id: inv.warehouse_id,
+                    type: inventory_transaction_type.SALE,
+                    quantity: -toDeduct,
+                    reference_type: 'ORDER_FULFILLED',
+                    reference_id: order.id,
+                  },
+                });
+
+                remainingToDeduct -= toDeduct;
+              }
+            }
+          }
+        });
+
+        await this.recordStripeLog({
+          eventType: 'CHECKOUT_SESSION_PAID',
+          orderId: order.id,
+          customerId: order.customer_id,
+          status: 'SUCCESS',
+          amount: Number(order.total),
+          currency: order.currency,
+          responseData: session,
+        });
+
+        // Send confirmation email to customer & notification to admin
+        try {
+          if (order.customer?.email) {
+            await this.mailService.sendOrderConfirmation(
+              order.customer.email,
+              order.customer.first_name,
+              order,
+            );
+          }
+          await this.mailService.sendAdminNewOrderNotification(order);
+
+          await this.notificationsService.createNotification({
+            type: 'ORDER',
+            title: 'Customer Order Paid (Card)',
+            message: `Order #${order.order_number} confirmed with card payment (${order.currency} ${order.total})`,
+            link: `/admin/orders/${order.id}`,
+            metadata: {
+              order_id: order.id,
+              order_number: order.order_number,
+              total: order.total,
+              currency: order.currency,
+              customer_name: `${order.customer?.first_name || ''} ${order.customer?.last_name || ''}`.trim(),
+            },
+          });
+        } catch (mailErr: any) {
+          this.logger.warn(`Failed to dispatch confirmation email: ${mailErr.message}`);
+        }
+      }
+
+      return {
+        success: true,
+        paid: true,
+        order_id: order.id,
+        order_number: order.order_number,
+        total: order.total,
+        currency: order.currency,
+      };
+    }
+
+    return {
+      success: false,
+      paid: false,
+      status: session.payment_status,
+      order_id: order.id,
+      order_number: order.order_number,
+    };
+  }
+
+  /**
+   * Generates a new Stripe Checkout Session for an existing unpaid order (Retry Payment flow).
+   */
+  async createStripeCheckoutSessionForOrder(orderId: string, origin?: string) {
+    await this.cancelExpiredUnpaidOrders();
+
+    const order = await this.prisma.orders.findUnique({
+      where: { id: orderId },
+      include: { customer: true, items: true },
+    });
+
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    if (order.status === order_status.CANCELLED) {
+      throw new BadRequestException('This order has expired or has already been cancelled.');
+    }
+
+    if (order.payment_status === payment_status.PAID) {
+      throw new BadRequestException('This order has already been paid.');
+    }
+
+    // Enforce 30-minute rule
+    const ageMs = Date.now() - new Date(order.created_at).getTime();
+    if (ageMs > 30 * 60 * 1000) {
+      await this.cancelPayment(order.id);
+      throw new BadRequestException('The 30-minute payment window has expired. This order has been cancelled.');
+    }
+
+    const stripeClient = await this.getStripeClient();
+    const stripeAmount = Math.max(50, Math.round(Number(order.total) * 100));
+
+    const storeUrl =
+      (origin && origin.trim()) ||
+      (await this.siteSettingsService.getSetting('STOREFRONT_URL')) ||
+      process.env.STOREFRONT_URL ||
+      'http://localhost:3000';
+
+    const session = await stripeClient.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [
+        {
+          price_data: {
+            currency: order.currency.toLowerCase(),
+            product_data: {
+              name: `Saba Al Wadi - Order #${order.order_number}`,
+              description: `${order.items.length} luxury garment(s)`,
+            },
+            unit_amount: stripeAmount,
+          },
+          quantity: 1,
+        },
+      ],
+      mode: 'payment',
+      customer_email: order.customer?.email || undefined,
+      client_reference_id: order.id,
+      metadata: {
+        order_id: order.id,
+        order_number: order.order_number,
+        customer_id: order.customer_id,
+        currency: order.currency,
+        base_total_aed: order.total.toString(),
+      },
+      expires_at: Math.floor(Date.now() / 1000) + (30 * 60),
+      success_url: `${storeUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}&order_id=${order.id}`,
+      cancel_url: `${storeUrl}/checkout/payment-retry?order_id=${order.id}&cancelled=true`,
+    });
+
+    await this.prisma.payments.updateMany({
+      where: { order_id: order.id },
+      data: {
+        provider_payment_intent: session.id,
+        response_json: { session_id: session.id, checkout_url: session.url } as any,
+      },
+    });
+
+    await this.recordStripeLog({
+      eventType: 'CREATE_RETRY_CHECKOUT_SESSION',
+      orderId: order.id,
+      customerId: order.customer_id,
+      status: 'SUCCESS',
+      amount: Number(order.total),
+      currency: order.currency,
+      requestData: { order_id: order.id, amount: stripeAmount, currency: order.currency.toLowerCase() },
+      responseData: session,
+    });
+
+    return {
+      checkout_url: session.url,
+      session_id: session.id,
+      order_id: order.id,
+      order_number: order.order_number,
+    };
+  }
+
+  /**
+   * Converts an unpaid card order into Cash on Delivery (COD) and sends confirmation email.
+   */
+  async switchOrderToCod(orderId: string) {
+    await this.cancelExpiredUnpaidOrders();
+
+    const order = await this.prisma.orders.findUnique({
+      where: { id: orderId },
+      include: { customer: true, items: true },
+    });
+
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    if (order.status === order_status.CANCELLED) {
+      throw new BadRequestException('This order has already been cancelled.');
+    }
+
+    if (order.payment_status === payment_status.PAID) {
+      throw new BadRequestException('This order is already paid.');
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const ord = await tx.orders.update({
+        where: { id: orderId },
+        data: {
+          payment_method: payment_method.CASH_ON_DELIVERY,
+          payment_status: payment_status.PENDING,
+          status: order_status.PENDING,
+        },
+        include: { customer: true, items: true },
+      });
+
+      await tx.payments.updateMany({
+        where: { order_id: orderId },
+        data: {
+          provider: 'CASH_ON_DELIVERY',
+          provider_payment_intent: `COD-${ord.order_number}`,
+          status: payment_status.PENDING,
+        },
+      });
+
+      return ord;
+    });
+
+    // Send COD confirmation email
+    try {
+      if (updated.customer?.email) {
+        await this.mailService.sendOrderConfirmation(
+          updated.customer.email,
+          updated.customer.first_name,
+          updated,
+        );
+      }
+      await this.mailService.sendAdminNewOrderNotification(updated);
+    } catch (err: any) {
+      this.logger.warn(`Failed to send COD confirmation email: ${err.message}`);
+    }
+
+    return {
+      success: true,
+      order_number: updated.order_number,
+      payment_method: 'CASH_ON_DELIVERY',
+    };
+  }
+
+  /**
+   * Retrieves payment status, countdown timer details, and order info for retry page.
+   */
+  async getOrderPaymentStatus(orderId: string) {
+    await this.cancelExpiredUnpaidOrders();
+
+    const order = await this.prisma.orders.findUnique({
+      where: { id: orderId },
+      select: {
+        id: true,
+        order_number: true,
+        status: true,
+        payment_status: true,
+        payment_method: true,
+        total: true,
+        subtotal: true,
+        shipping: true,
+        discount: true,
+        currency: true,
+        created_at: true,
+        items: {
+          select: {
+            id: true,
+            product_name: true,
+            variant_name: true,
+            price: true,
+            quantity: true,
+            subtotal: true,
+            sku: true,
+          },
+        },
+        customer: {
+          select: {
+            first_name: true,
+            last_name: true,
+            email: true,
+            phone: true,
+          },
+        },
+      },
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Order with ID ${orderId} not found`);
+    }
+
+    const ageMs = Date.now() - new Date(order.created_at).getTime();
+    const maxWindowMs = 30 * 60 * 1000;
+    const remainingSeconds = Math.max(0, Math.floor((maxWindowMs - ageMs) / 1000));
+    const isExpired = ageMs > maxWindowMs && order.payment_status === payment_status.PENDING;
+
+    if (isExpired && order.status !== order_status.CANCELLED) {
+      await this.cancelPayment(order.id);
+      order.status = order_status.CANCELLED;
+      order.payment_status = payment_status.FAILED;
+    }
+
+    return {
+      ...order,
+      age_ms: ageMs,
+      remaining_seconds: remainingSeconds,
+      is_expired: isExpired || order.status === order_status.CANCELLED,
+    };
+  }
+
   // --- NUMBER GENERATION HELPERS ---
 
   /**
-   * Generates sequential order numbers in the format SW20250001, SW20250002...
+   * Generates sequential order numbers in the format SW<YYYY>00001, SW<YYYY>00002...
+   * The year is dynamically based on current year, and resets back to 00001 on each new year.
    */
   async generateOrderNumber(tx?: any): Promise<string> {
     const client = tx || this.prisma;
+    const currentYear = new Date().getFullYear();
+    const yearPrefix = `SW${currentYear}`;
+
+    // Find the highest order number for the current year
     const lastOrder = await client.orders.findFirst({
       where: {
         order_number: {
-          startsWith: 'SW',
+          startsWith: yearPrefix,
         },
       },
       orderBy: {
@@ -593,15 +1338,20 @@ export class OrdersService {
       },
     });
 
-    let nextSeq = 20250001;
+    let nextCounter = 1;
+    let padLength = 5; // Default 5 digits (00001) as requested by user
+
     if (lastOrder && lastOrder.order_number) {
-      const numPart = parseInt(lastOrder.order_number.replace(/^SW/i, ''), 10);
-      if (!isNaN(numPart) && numPart >= 20250001) {
-        nextSeq = numPart + 1;
+      const seqStr = lastOrder.order_number.slice(yearPrefix.length);
+      const parsed = parseInt(seqStr, 10);
+      if (!isNaN(parsed) && parsed >= 1) {
+        nextCounter = parsed + 1;
+        padLength = Math.max(seqStr.length, 5);
       }
     }
 
-    return `SW${nextSeq}`;
+    const formattedSeq = String(nextCounter).padStart(padLength, '0');
+    return `${yearPrefix}${formattedSeq}`;
   }
 
   /**
@@ -694,13 +1444,20 @@ export class OrdersService {
         skip: skipCount,
         include: {
           customer: {
-            select: { first_name: true, last_name: true, email: true },
+            select: { first_name: true, last_name: true, email: true, phone: true },
           },
           items: {
             include: {
               variant: {
                 include: {
                   images: true,
+                  attributes: {
+                    include: {
+                      attribute_value: {
+                        include: { attribute: true },
+                      },
+                    },
+                  },
                   product: {
                     include: {
                       images: true,
@@ -728,6 +1485,13 @@ export class OrdersService {
             variant: {
               include: {
                 images: true,
+                attributes: {
+                  include: {
+                    attribute_value: {
+                      include: { attribute: true },
+                    },
+                  },
+                },
                 product: {
                   include: {
                     images: true,
@@ -758,11 +1522,19 @@ export class OrdersService {
     return this.prisma.orders.findMany({
       where: { customer_id: customerId },
       include: {
+        customer: true,
         items: {
           include: {
             variant: {
               include: {
                 images: true,
+                attributes: {
+                  include: {
+                    attribute_value: {
+                      include: { attribute: true },
+                    },
+                  },
+                },
                 product: {
                   include: {
                     images: true,
@@ -1154,6 +1926,7 @@ export class OrdersService {
   }
 
   async onModuleInit() {
+    // 1. Seed delivery partners if empty
     try {
       const count = await this.prisma.delivery_partners.count();
       if (count === 0) {
@@ -1170,6 +1943,12 @@ export class OrdersService {
         });
       }
     } catch (_) {}
+
+    // 2. Clean up expired unpaid Stripe orders immediately and periodically every 2 minutes
+    this.cancelExpiredUnpaidOrders().catch(() => {});
+    setInterval(() => {
+      this.cancelExpiredUnpaidOrders().catch(() => {});
+    }, 2 * 60 * 1000);
   }
 
   async getDeliveryPartners(limit = 50, skip = 0) {

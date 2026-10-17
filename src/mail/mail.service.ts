@@ -12,6 +12,7 @@ export class MailService {
     transporter: nodemailer.Transporter | null;
     from: string;
     adminEmail: string;
+    adminEmails: string[];
   }> {
     const settings = await this.prisma.site_settings.findMany({
       where: {
@@ -24,6 +25,7 @@ export class MailService {
             'SMTP_SECURE',
             'EMAIL_FROM',
             'ADMIN_EMAIL',
+            'ADMIN_EMAILS',
           ],
         },
       },
@@ -33,21 +35,51 @@ export class MailService {
       {} as Record<string, string>
     );
 
-    const host = map['SMTP_HOST'] || process.env.SMTP_HOST || 'smtp.gmail.com';
+    const host = (map['SMTP_HOST'] || process.env.SMTP_HOST || 'smtp.gmail.com').trim();
     const port = Number(map['SMTP_PORT'] || process.env.SMTP_PORT || 587);
-    const user = map['SMTP_USER'] || process.env.SMTP_USER;
-    const pass = map['SMTP_PASS'] || process.env.SMTP_PASS;
-    const secure =
-      (map['SMTP_SECURE'] || process.env.SMTP_SECURE) === 'true';
+    const user = (map['SMTP_USER'] || process.env.SMTP_USER || '').trim();
+    let pass = (map['SMTP_PASS'] || process.env.SMTP_PASS || '').trim();
+    // Google App Passwords are shown in 4x4 groups like "abcd efgh ijkl mnop". Strip spaces for reliability.
+    if (host.includes('gmail.com') && pass.includes(' ')) {
+      pass = pass.replace(/\s+/g, '');
+    }
+    // Port 465 requires direct SSL/TLS (secure: true). Port 587 uses STARTTLS (secure: false).
+    const secure = port === 465 ? true : (map['SMTP_SECURE'] || process.env.SMTP_SECURE) === 'true';
     const from =
       map['EMAIL_FROM'] ||
       process.env.EMAIL_FROM ||
       'Saba Al Wadi Abayas <no-reply@sabaalwadi.ae>';
-    const adminEmail =
-      map['ADMIN_EMAIL'] ||
-      process.env.ADMIN_EMAIL ||
-      user ||
-      'admin@sabaalwadi.ae';
+
+    // Prioritize Privileged Admin Emails (ADMIN_EMAILS) from Settings
+    const dbAdminEmails = (map['ADMIN_EMAILS'] || '').trim();
+    const envAdminEmails = (process.env.ADMIN_EMAILS || '').trim();
+    const dbAdminEmail = (map['ADMIN_EMAIL'] || '').trim();
+    const envAdminEmail = (process.env.ADMIN_EMAIL || '').trim();
+
+    let candidateEmails = '';
+    if (dbAdminEmails) {
+      candidateEmails = dbAdminEmails;
+    } else if (envAdminEmails) {
+      candidateEmails = envAdminEmails;
+    } else if (dbAdminEmail && dbAdminEmail !== 'admin@sabaalwadi.ae') {
+      candidateEmails = dbAdminEmail;
+    } else if (envAdminEmail) {
+      candidateEmails = envAdminEmail;
+    } else if (dbAdminEmail) {
+      candidateEmails = dbAdminEmail;
+    } else if (user && user.includes('@')) {
+      candidateEmails = user;
+    } else {
+      candidateEmails = 'admin@sabaalwadi.ae';
+    }
+
+    const parsedList = candidateEmails
+      .split(',')
+      .map((e) => e.trim())
+      .filter((e) => Boolean(e) && e.includes('@'));
+
+    const adminEmails = parsedList.length > 0 ? parsedList : ['admin@sabaalwadi.ae'];
+    const adminEmail = adminEmails[0];
 
     if (user && pass && pass !== 'demo_app_password') {
       try {
@@ -56,13 +88,239 @@ export class MailService {
           port,
           secure,
           auth: { user, pass },
+          connectionTimeout: 10000,
         });
-        return { transporter, from, adminEmail };
+        return { transporter, from, adminEmail, adminEmails };
       } catch (err: any) {
         this.logger.warn(`Failed to create SMTP transporter: ${err.message}`);
       }
     }
-    return { transporter: null, from, adminEmail };
+    return { transporter: null, from, adminEmail, adminEmails };
+  }
+
+  async verifySmtp(customConfig?: {
+    host?: string;
+    port?: number | string;
+    user?: string;
+    pass?: string;
+    secure?: boolean | string;
+  }): Promise<{ success: boolean; message: string }> {
+    let host = customConfig?.host;
+    let port = customConfig?.port ? Number(customConfig.port) : undefined;
+    let user = customConfig?.user?.trim();
+    let pass = customConfig?.pass?.trim();
+    let secure = customConfig?.secure === true || customConfig?.secure === 'true';
+
+    if (!host || !user || !pass) {
+      const dbSettings = await this.prisma.site_settings.findMany({
+        where: {
+          key: { in: ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'SMTP_SECURE'] },
+        },
+      });
+      const map = dbSettings.reduce((acc, s) => ({ ...acc, [s.key]: s.value }), {} as Record<string, string>);
+      host = host || map['SMTP_HOST'] || 'smtp.gmail.com';
+      port = port || Number(map['SMTP_PORT'] || 587);
+      user = user || map['SMTP_USER'] || '';
+      pass = pass || map['SMTP_PASS'] || '';
+      secure = port === 465 ? true : (map['SMTP_SECURE'] === 'true');
+    }
+
+    if (!user || !pass) {
+      return { success: false, message: 'SMTP Username and Password/App Secret are required.' };
+    }
+
+    if (host.includes('gmail.com') && pass.includes(' ')) {
+      pass = pass.replace(/\s+/g, '');
+    }
+    if (port === 465) secure = true;
+
+    try {
+      const transporter = nodemailer.createTransport({
+        host,
+        port: port || 587,
+        secure,
+        auth: { user, pass },
+        connectionTimeout: 10000,
+      });
+      await transporter.verify();
+      return { success: true, message: `SMTP connected and authenticated successfully with ${host}:${port}!` };
+    } catch (err: any) {
+      return { success: false, message: err.message || 'SMTP authentication failed' };
+    }
+  }
+
+  // ─── Central Email Dispatcher with Detailed Logging & Retry ───
+
+  async dispatchMail(options: {
+    to: string;
+    subject: string;
+    html: string;
+    text?: string;
+    cc?: string;
+    bcc?: string;
+    existingLogId?: string;
+  }): Promise<{ success: boolean; error?: string; logId?: string }> {
+    const { to, subject, html, text, cc, bcc, existingLogId } = options;
+    let logRecord: any = null;
+
+    try {
+      if (existingLogId) {
+        logRecord = await (this.prisma as any).email_logs.update({
+          where: { id: existingLogId },
+          data: {
+            attempts: { increment: 1 },
+            last_attempt: new Date(),
+            status: 'PENDING',
+          },
+        });
+      } else {
+        logRecord = await (this.prisma as any).email_logs.create({
+          data: {
+            to,
+            cc: cc || null,
+            bcc: bcc || null,
+            subject,
+            body_html: html,
+            body_text: text || null,
+            status: 'PENDING',
+            attempts: 1,
+            last_attempt: new Date(),
+          },
+        });
+      }
+    } catch (dbErr: any) {
+      this.logger.error(`Failed to record email_log in database: ${dbErr.message}`);
+    }
+
+    const { transporter, from } = await this.getTransporterAndFrom();
+
+    if (!transporter) {
+      const errMessage = 'SMTP transporter not configured. Please configure SMTP host, user, and password in Site Settings.';
+      this.logger.warn(`Cannot send email to ${to}: ${errMessage}`);
+      if (logRecord?.id) {
+        try {
+          await (this.prisma as any).email_logs.update({
+            where: { id: logRecord.id },
+            data: { status: 'FAILED', error: errMessage },
+          });
+        } catch (_) {}
+      }
+      return { success: false, error: errMessage, logId: logRecord?.id };
+    }
+
+    try {
+      await transporter.sendMail({
+        from,
+        to,
+        cc: cc || undefined,
+        bcc: bcc || undefined,
+        subject,
+        html,
+        text: text || undefined,
+      });
+
+      this.logger.log(`Email dispatched successfully to ${to} [Subject: "${subject}"]`);
+
+      if (logRecord?.id) {
+        try {
+          await (this.prisma as any).email_logs.update({
+            where: { id: logRecord.id },
+            data: { status: 'SENT', error: null },
+          });
+        } catch (_) {}
+      }
+
+      return { success: true, logId: logRecord?.id };
+    } catch (err: any) {
+      this.logger.error(`SMTP send failure to ${to}: ${err.message}`);
+
+      if (logRecord?.id) {
+        try {
+          await (this.prisma as any).email_logs.update({
+            where: { id: logRecord.id },
+            data: { status: 'FAILED', error: err.message || String(err) },
+          });
+        } catch (_) {}
+      }
+
+      return { success: false, error: err.message, logId: logRecord?.id };
+    }
+  }
+
+  async retryEmail(id: string): Promise<{ success: boolean; message: string; error?: string }> {
+    const log = await (this.prisma as any).email_logs.findUnique({
+      where: { id },
+    });
+
+    if (!log) {
+      return { success: false, message: `Email log with ID ${id} not found.` };
+    }
+
+    const result = await this.dispatchMail({
+      to: log.to,
+      subject: log.subject,
+      html: log.body_html,
+      text: log.body_text || undefined,
+      cc: log.cc || undefined,
+      bcc: log.bcc || undefined,
+      existingLogId: log.id,
+    });
+
+    return {
+      success: result.success,
+      message: result.success
+        ? `Email successfully re-dispatched to ${log.to}!`
+        : `Email retry failed: ${result.error}`,
+      error: result.error,
+    };
+  }
+
+  async getEmailLogs(query: {
+    page?: number;
+    limit?: number;
+    status?: string;
+    search?: string;
+  }) {
+    const page = Math.max(1, query.page || 1);
+    const limit = Math.min(100, Math.max(1, query.limit || 25));
+    const skip = (page - 1) * limit;
+
+    const where: any = {};
+    if (query.status && query.status !== 'ALL') {
+      where.status = query.status.toUpperCase();
+    }
+    if (query.search?.trim()) {
+      const q = query.search.trim();
+      where.OR = [
+        { to: { contains: q, mode: 'insensitive' } },
+        { cc: { contains: q, mode: 'insensitive' } },
+        { subject: { contains: q, mode: 'insensitive' } },
+        { error: { contains: q, mode: 'insensitive' } },
+      ];
+    }
+
+    const [items, total] = await Promise.all([
+      (this.prisma as any).email_logs.findMany({
+        where,
+        orderBy: { created_at: 'desc' },
+        skip,
+        take: limit,
+      }),
+      (this.prisma as any).email_logs.count({ where }),
+    ]);
+
+    return {
+      items,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit) || 1,
+    };
+  }
+
+  async clearEmailLogs() {
+    await (this.prisma as any).email_logs.deleteMany();
+    return { success: true, message: 'All email logs cleared successfully.' };
   }
 
   async sendOtpEmail(email: string, otp: string, firstName: string): Promise<boolean> {
@@ -90,23 +348,12 @@ export class MailService {
     // Always log OTP for development convenience
     this.logger.log(`\n========================================\n[EMAIL OTP] To: ${email} | OTP: ${otp}\n========================================`);
 
-    const { transporter, from } = await this.getTransporterAndFrom();
-    if (transporter) {
-      try {
-        await transporter.sendMail({
-          from,
-          to: email,
-          subject,
-          html,
-        });
-        this.logger.log(`OTP email sent successfully to ${email}`);
-        return true;
-      } catch (err: any) {
-        this.logger.error(`Failed to send email via SMTP to ${email}: ${err.message}`);
-        // Return true because dev OTP is logged and registered in DB
-        return true;
-      }
-    }
+    await this.dispatchMail({
+      to: email,
+      subject,
+      html,
+      text: `Your Saba Al Wadi OTP is: ${otp}`,
+    });
 
     return true;
   }
@@ -172,18 +419,18 @@ export class MailService {
 
     this.logger.log(`\n========================================\n[ORDER EMAIL TO CUSTOMER] To: ${email} | Order: ${order.order_number} | Total: ${totalFormatted} ${currency}\n========================================`);
 
-    if (transporter) {
-      try {
-        await transporter.sendMail({ from, to: email, subject, html });
-      } catch (err: any) {
-        this.logger.error(`Failed to send order email to customer: ${err.message}`);
-      }
-    }
+    await this.dispatchMail({
+      to: email,
+      subject,
+      html,
+    });
     return true;
   }
 
   async sendAdminNewOrderNotification(order: any): Promise<boolean> {
-    const { transporter, from, adminEmail } = await this.getTransporterAndFrom();
+    const { adminEmail, adminEmails } = await this.getTransporterAndFrom();
+    const recipientEmails = adminEmails && adminEmails.length > 0 ? adminEmails : [adminEmail];
+    const recipients = recipientEmails.join(', ');
     const subject = `🚨 NEW ORDER RECEIVED: #${order.order_number} - Total ${Number(order.total || 0).toFixed(2)} AED`;
     const currency = order.currency || 'AED';
 
@@ -201,15 +448,69 @@ export class MailService {
       </div>
     `;
 
-    this.logger.log(`\n========================================\n[ORDER EMAIL TO ADMIN] To: ${adminEmail} | Order: ${order.order_number}\n========================================`);
+    this.logger.log(`\n========================================\n[ORDER EMAIL TO ADMIN] To: ${recipients} | Order: ${order.order_number}\n========================================`);
 
-    if (transporter) {
-      try {
-        await transporter.sendMail({ from, to: adminEmail, subject, html });
-      } catch (err: any) {
-        this.logger.error(`Failed to send order email to admin: ${err.message}`);
-      }
-    }
+    await this.dispatchMail({
+      to: recipients,
+      subject,
+      html,
+    });
+    return true;
+  }
+
+  async sendAdminNewReviewNotification(review: any, product: any): Promise<boolean> {
+    const { adminEmail, adminEmails } = await this.getTransporterAndFrom();
+    const recipientEmails = adminEmails && adminEmails.length > 0 ? adminEmails : [adminEmail];
+    const recipients = recipientEmails.join(', ');
+    const subject = `⭐ NEW PRODUCT REVIEW: ${review.rating}★ for "${product?.name || 'Product'}"`;
+
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 25px; background-color: #18181b; color: #f4f4f5; border: 1px solid #3f3f46; border-radius: 8px;">
+        <h2 style="color: #fbbf24; margin-top: 0;">New Product Review Received!</h2>
+        <div style="background-color: #27272a; padding: 15px; border-radius: 6px; margin: 15px 0;">
+          <p style="margin: 5px 0; font-size: 14px;"><strong>Product:</strong> ${product?.name || 'Abaya'}</p>
+          <p style="margin: 5px 0; font-size: 14px;"><strong>Rating:</strong> <span style="color: #fbbf24; font-weight: bold;">${review.rating} / 5 Stars</span></p>
+          <p style="margin: 5px 0; font-size: 14px;"><strong>Review:</strong> ${review.review || '(No written review text)'}</p>
+        </div>
+        <p style="font-size: 13px; color: #a1a1aa;">Please log into the Admin Dashboard to moderate reviews.</p>
+      </div>
+    `;
+
+    this.logger.log(`\n========================================\n[REVIEW EMAIL TO ADMIN] To: ${recipients} | Rating: ${review.rating}★\n========================================`);
+
+    await this.dispatchMail({
+      to: recipients,
+      subject,
+      html,
+    });
+    return true;
+  }
+
+  async sendAdminNewBlogCommentNotification(comment: any, blog: any): Promise<boolean> {
+    const { adminEmail, adminEmails } = await this.getTransporterAndFrom();
+    const recipientEmails = adminEmails && adminEmails.length > 0 ? adminEmails : [adminEmail];
+    const recipients = recipientEmails.join(', ');
+    const subject = `💬 NEW BLOG COMMENT: on "${blog?.title || 'Article'}"`;
+
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 25px; background-color: #18181b; color: #f4f4f5; border: 1px solid #3f3f46; border-radius: 8px;">
+        <h2 style="color: #fbbf24; margin-top: 0;">New Blog Comment Received!</h2>
+        <div style="background-color: #27272a; padding: 15px; border-radius: 6px; margin: 15px 0;">
+          <p style="margin: 5px 0; font-size: 14px;"><strong>Blog Post:</strong> ${blog?.title || 'Article'}</p>
+          <p style="margin: 5px 0; font-size: 14px;"><strong>Author:</strong> ${comment.author_name} (${comment.author_email})</p>
+          <p style="margin: 5px 0; font-size: 14px;"><strong>Comment:</strong> ${comment.content}</p>
+        </div>
+        <p style="font-size: 13px; color: #a1a1aa;">Please log into the Admin Dashboard to moderate comments.</p>
+      </div>
+    `;
+
+    this.logger.log(`\n========================================\n[BLOG COMMENT EMAIL TO ADMIN] To: ${recipients} | Author: ${comment.author_name}\n========================================`);
+
+    await this.dispatchMail({
+      to: recipients,
+      subject,
+      html,
+    });
     return true;
   }
 
@@ -222,7 +523,6 @@ export class MailService {
     trackingNumber?: string,
     trackingUrl?: string,
   ): Promise<boolean> {
-    const { transporter, from } = await this.getTransporterAndFrom();
     const subject = `Order Update: #${orderNumber} is now ${newStatus}`;
 
     const trackingHtml = trackingNumber || deliveryPartner ? `
@@ -253,13 +553,11 @@ export class MailService {
 
     this.logger.log(`\n========================================\n[STATUS UPDATE EMAIL] To: ${email} | Order: ${orderNumber} | Status: ${newStatus} | Courier: ${deliveryPartner || 'N/A'}\n========================================`);
 
-    if (transporter) {
-      try {
-        await transporter.sendMail({ from, to: email, subject, html });
-      } catch (err: any) {
-        this.logger.error(`Failed to send status update email: ${err.message}`);
-      }
-    }
+    await this.dispatchMail({
+      to: email,
+      subject,
+      html,
+    });
     return true;
   }
 
@@ -267,8 +565,9 @@ export class MailService {
     productName: string,
     newStatus: string,
   ): Promise<boolean> {
-    const adminEmail = process.env.ADMIN_EMAIL || process.env.SMTP_USER || 'admin@sabaalwadi.ae';
-    this.logger.log(`\n========================================\n[PRODUCT STATUS NOTIFICATION] Product: "${productName}" is now ${newStatus}\n========================================`);
+    const { adminEmail, adminEmails } = await this.getTransporterAndFrom();
+    const recipients = (adminEmails && adminEmails.length > 0 ? adminEmails : [adminEmail]).join(', ');
+    this.logger.log(`\n========================================\n[PRODUCT STATUS NOTIFICATION] Product: "${productName}" is now ${newStatus} | To: ${recipients}\n========================================`);
     return true;
   }
 
@@ -281,11 +580,8 @@ export class MailService {
     message: string,
     attachmentUrl?: string | null,
   ): Promise<boolean> {
-    const { transporter, from, adminEmail } = await this.getTransporterAndFrom();
-    const envAdminEmails = process.env.ADMIN_EMAILS
-      ? process.env.ADMIN_EMAILS.split(',').map((e) => e.trim()).filter(Boolean)
-      : [];
-    const recipientEmails = envAdminEmails.length > 0 ? envAdminEmails : [adminEmail];
+    const { adminEmail, adminEmails } = await this.getTransporterAndFrom();
+    const recipientEmails = adminEmails && adminEmails.length > 0 ? adminEmails : [adminEmail];
     const customerDisplayName = session.customer_name || 'Customer';
     const customerEmailStr = session.customer_email || 'Not provided';
     const subject = `💬 [MISSED CHAT] Inactive Admin Alert: New message from ${customerDisplayName} (${session.session_id.slice(0, 8)})`;
@@ -322,18 +618,11 @@ export class MailService {
 
     this.logger.log(`\n========================================\n[MISSED CHAT EMAIL TO ADMIN] Recipients: ${recipientEmails.join(', ')} | Customer: ${customerDisplayName} | Msg: ${message}\n========================================`);
 
-    if (transporter) {
-      try {
-        await transporter.sendMail({
-          from,
-          to: recipientEmails.join(', '),
-          subject,
-          html,
-        });
-      } catch (err: any) {
-        this.logger.error(`Failed to send missed chat notification email to admin: ${err.message}`);
-      }
-    }
+    await this.dispatchMail({
+      to: recipientEmails.join(', '),
+      subject,
+      html,
+    });
     return true;
   }
 
@@ -344,7 +633,6 @@ export class MailService {
     attachmentUrl?: string | null,
     sessionId?: string,
   ): Promise<boolean> {
-    const { transporter, from } = await this.getTransporterAndFrom();
     const subject = `💬 Response to your inquiry - Saba Al Wadi Concierge`;
 
     const html = `
@@ -377,19 +665,11 @@ export class MailService {
 
     this.logger.log(`\n========================================\n[ADMIN REPLY EMAIL TO CUSTOMER] To: ${customerEmail} | Session: ${sessionId || 'N/A'}\n========================================`);
 
-    if (transporter) {
-      try {
-        await transporter.sendMail({
-          from,
-          to: customerEmail,
-          subject,
-          html,
-        });
-        return true;
-      } catch (err: any) {
-        this.logger.error(`Failed to send admin reply email to customer: ${err.message}`);
-      }
-    }
+    await this.dispatchMail({
+      to: customerEmail,
+      subject,
+      html,
+    });
     return true;
   }
 }

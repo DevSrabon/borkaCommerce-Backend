@@ -29,6 +29,10 @@ export class CheckoutDto {
   @IsOptional()
   payment_method?: 'STRIPE' | 'CASH_ON_DELIVERY';
 
+  @IsString()
+  @IsOptional()
+  origin?: string;
+
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => CheckoutItemDto)

@@ -1,7 +1,7 @@
-import { Controller, Get, Post, Body, Query, UseGuards, Res } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Param, Body, Query, UseGuards, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { InventoryService } from './inventory.service';
-import { CreateWarehouseDto, AdjustInventoryDto } from './dto/inventory.dto';
+import { CreateWarehouseDto, AdjustInventoryDto, BatchAdjustInventoryDto } from './dto/inventory.dto';
 import { AdminGuard } from '../auth/admin.guard';
 
 @UseGuards(AdminGuard)
@@ -32,6 +32,16 @@ export class InventoryController {
   @Post('inventory/adjust')
   adjustStock(@Body() adjustInventoryDto: AdjustInventoryDto) {
     return this.inventoryService.adjustStock(adjustInventoryDto);
+  }
+
+  @Post('inventory/batch-adjust')
+  batchAdjust(@Body() batchAdjustDto: BatchAdjustInventoryDto) {
+    return this.inventoryService.batchAdjust(batchAdjustDto);
+  }
+
+  @Delete('inventory/:id')
+  deleteInventory(@Param('id') id: string) {
+    return this.inventoryService.deleteInventory(id);
   }
 
   @Get('inventory')

@@ -1,10 +1,24 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
-import { CreateWarehouseDto, AdjustInventoryDto } from './dto/inventory.dto';
+import { CreateWarehouseDto, AdjustInventoryDto, BatchAdjustInventoryDto } from './dto/inventory.dto';
+import { inventory_transaction_type } from '@prisma/client';
 
 @Injectable()
 export class InventoryService {
   constructor(private prisma: PrismaService) {}
+
+  async getDefaultWarehouse() {
+    let warehouse = await this.prisma.warehouses.findFirst();
+    if (!warehouse) {
+      warehouse = await this.prisma.warehouses.create({
+        data: {
+          name: 'Main Store / Warehouse',
+          location: 'Dubai, UAE',
+        },
+      });
+    }
+    return warehouse;
+  }
 
   async createWarehouse(dto: CreateWarehouseDto) {
     return this.prisma.warehouses.create({
@@ -36,13 +50,27 @@ export class InventoryService {
       throw new NotFoundException('Variant not found');
     }
 
-    // Verify warehouse exists
-    const warehouse = await this.prisma.warehouses.findUnique({
-      where: { id: dto.warehouse_id },
-    });
-    if (!warehouse) {
-      throw new NotFoundException('Warehouse not found');
+    // Resolve warehouse (default if not provided)
+    let warehouseId = dto.warehouse_id;
+    if (!warehouseId) {
+      const defaultWh = await this.getDefaultWarehouse();
+      warehouseId = defaultWh.id;
+    } else {
+      const warehouse = await this.prisma.warehouses.findUnique({
+        where: { id: warehouseId },
+      });
+      if (!warehouse) {
+        throw new NotFoundException('Warehouse not found');
+      }
     }
+
+    const txType =
+      dto.type ||
+      (dto.quantity >= 0
+        ? inventory_transaction_type.PURCHASE
+        : inventory_transaction_type.MANUAL_ADJUSTMENT);
+
+    const auditRef = dto.note?.trim() || dto.reference_type || (dto.quantity >= 0 ? 'STOCK_IN' : 'STOCK_OUT');
 
     return this.prisma.$transaction(async (tx) => {
       // Find or create inventory mapping
@@ -50,7 +78,7 @@ export class InventoryService {
         where: {
           variant_id_warehouse_id: {
             variant_id: dto.variant_id,
-            warehouse_id: dto.warehouse_id,
+            warehouse_id: warehouseId,
           },
         },
       });
@@ -63,7 +91,7 @@ export class InventoryService {
         inv = await tx.inventory.create({
           data: {
             variant_id: dto.variant_id,
-            warehouse_id: dto.warehouse_id,
+            warehouse_id: warehouseId,
             quantity: 0,
             reserved_quantity: 0,
             available_quantity: 0,
@@ -76,7 +104,7 @@ export class InventoryService {
 
       if (newQuantity < 0 || newAvailable < 0) {
         throw new BadRequestException(
-          `Insufficient stock. Current: ${inv.quantity}, Reserved: ${inv.reserved_quantity}. Cannot adjust by ${dto.quantity}.`
+          `Insufficient stock for SKU ${variant.sku}. Current: ${inv.quantity}, Reserved: ${inv.reserved_quantity}. Cannot adjust by ${dto.quantity}.`
         );
       }
 
@@ -93,10 +121,10 @@ export class InventoryService {
       await tx.inventory_transactions.create({
         data: {
           variant_id: dto.variant_id,
-          warehouse_id: dto.warehouse_id,
-          type: dto.type,
+          warehouse_id: warehouseId,
+          type: txType,
           quantity: dto.quantity,
-          reference_type: dto.reference_type || 'MANUAL_ADJUSTMENT',
+          reference_type: auditRef,
           reference_id: dto.reference_id,
         },
       });
@@ -105,17 +133,167 @@ export class InventoryService {
     });
   }
 
+  async batchAdjust(dto: BatchAdjustInventoryDto) {
+    if (!dto.items || dto.items.length === 0) {
+      throw new BadRequestException('No items provided for stock adjustment');
+    }
+
+    // Resolve warehouse (default if not provided)
+    let warehouseId = dto.warehouse_id;
+    if (!warehouseId) {
+      const defaultWh = await this.getDefaultWarehouse();
+      warehouseId = defaultWh.id;
+    }
+
+    const auditRef = dto.note?.trim() || dto.reference_type || 'BATCH_ADJUSTMENT';
+
+    return this.prisma.$transaction(async (tx) => {
+      const results: any[] = [];
+
+      for (const item of dto.items) {
+        if (!item.variant_id || item.quantity === 0) continue;
+
+        const variant = await tx.product_variants.findUnique({
+          where: { id: item.variant_id },
+          include: { product: true },
+        });
+
+        if (!variant) {
+          throw new NotFoundException(`Variant ${item.variant_id} not found`);
+        }
+
+        const txType =
+          dto.type ||
+          (item.quantity >= 0
+            ? inventory_transaction_type.PURCHASE
+            : inventory_transaction_type.MANUAL_ADJUSTMENT);
+
+        let inv = await tx.inventory.findUnique({
+          where: {
+            variant_id_warehouse_id: {
+              variant_id: item.variant_id,
+              warehouse_id: warehouseId,
+            },
+          },
+        });
+
+        if (!inv) {
+          if (item.quantity < 0) {
+            throw new BadRequestException(`Cannot deduct inventory for SKU "${variant.sku}". No stock record exists.`);
+          }
+
+          inv = await tx.inventory.create({
+            data: {
+              variant_id: item.variant_id,
+              warehouse_id: warehouseId,
+              quantity: 0,
+              reserved_quantity: 0,
+              available_quantity: 0,
+            },
+          });
+        }
+
+        const newQuantity = inv.quantity + item.quantity;
+        const newAvailable = inv.available_quantity + item.quantity;
+
+        if (newQuantity < 0 || newAvailable < 0) {
+          throw new BadRequestException(
+            `Insufficient stock for SKU "${variant.sku}". Current available: ${inv.available_quantity}. Cannot deduct ${Math.abs(item.quantity)}.`
+          );
+        }
+
+        const updatedInv = await tx.inventory.update({
+          where: { id: inv.id },
+          data: {
+            quantity: newQuantity,
+            available_quantity: newAvailable,
+          },
+        });
+
+        await tx.inventory_transactions.create({
+          data: {
+            variant_id: item.variant_id,
+            warehouse_id: warehouseId,
+            type: txType,
+            quantity: item.quantity,
+            reference_type: auditRef,
+          },
+        });
+
+        results.push(updatedInv);
+      }
+
+      return {
+        success: true,
+        adjusted_count: results.length,
+        items: results,
+      };
+    });
+  }
+
+  async deleteInventory(id: string) {
+    const existing = await this.prisma.inventory.findUnique({
+      where: { id },
+      include: { variant: true },
+    });
+    if (!existing) {
+      throw new NotFoundException('Inventory record not found');
+    }
+
+    await this.prisma.inventory.delete({
+      where: { id },
+    });
+
+    return {
+      success: true,
+      message: `Inventory record for SKU "${existing.variant?.sku || id}" deleted successfully`,
+    };
+  }
+
   async getInventoryStatus() {
-    return this.prisma.inventory.findMany({
+    const records = await this.prisma.inventory.findMany({
       include: {
         variant: {
           include: {
-            product: true,
+            product: {
+              include: {
+                images: true,
+              },
+            },
+            attributes: {
+              include: {
+                attribute_value: {
+                  include: {
+                    attribute: true,
+                  },
+                },
+              },
+            },
           },
         },
         warehouse: true,
       },
       orderBy: { updated_at: 'desc' },
+    });
+
+    return records.map((r) => {
+      const thumb =
+        r.variant?.product?.images?.find((img) => img.is_thumbnail)?.image_url ||
+        r.variant?.product?.images?.[0]?.image_url ||
+        null;
+
+      return {
+        ...r,
+        variant: {
+          ...r.variant,
+          product: r.variant?.product
+            ? {
+                ...r.variant.product,
+                thumbnail_url: thumb,
+              }
+            : null,
+        },
+      };
     });
   }
 

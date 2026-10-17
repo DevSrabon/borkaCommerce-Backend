@@ -22,15 +22,23 @@ export class AddressesService {
       });
       const isDefault = count === 0 ? true : (dto.is_default || false);
 
+      // Update customer contact phone if supplied
+      if (dto.phone && dto.phone.trim()) {
+        await tx.customers.update({
+          where: { id: customerId },
+          data: { phone: dto.phone.trim() },
+        });
+      }
+
       return tx.customer_addresses.create({
         data: {
           customer_id: customerId,
           country: dto.country,
           city: dto.city,
-          area: dto.area,
+          area: dto.area?.trim() || dto.city?.trim() || 'General',
           street: dto.street,
-          building: dto.building,
-          postal_code: dto.postal_code,
+          building: dto.building?.trim() || null,
+          postal_code: dto.postal_code?.trim() || null,
           is_default: isDefault,
         },
       });

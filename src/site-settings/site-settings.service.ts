@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 
 export interface DeliveryCalculation {
@@ -12,13 +12,21 @@ export interface DeliveryCalculation {
 }
 
 @Injectable()
-export class SiteSettingsService {
+export class SiteSettingsService implements OnModuleInit {
   constructor(private readonly prisma: PrismaService) {}
 
   // Default fallback values matching .env lines 4-23 & delivery configuration
   private readonly defaultSettings: Record<string, string> = {
+    // Currency & Exchange Rates (Base AED)
+    default_currency: 'AED',
+    currency_rate_usd: '0.272',
+    currency_rate_gbp: '0.213',
+    currency_rate_eur: '0.250',
+    currency_last_updated: '',
+
     STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY || '',
-    ADMIN_EMAILS: process.env.ADMIN_EMAILS || 'admin@example.com,srabon@example.com',
+    STRIPE_PUBLISHABLE_KEY: process.env.STRIPE_PUBLISHABLE_KEY || '',
+    ADMIN_EMAILS: process.env.ADMIN_EMAILS || '',
 
     SMTP_HOST: process.env.SMTP_HOST || 'smtp.gmail.com',
     SMTP_PORT: process.env.SMTP_PORT || '587',
@@ -41,7 +49,7 @@ export class SiteSettingsService {
       process.env.CLOUDFLARE_TURNSTILE_SITE_KEY || '1x00000000000000000000AA',
     CLOUDFLARE_TURNSTILE_SECRET_KEY:
       process.env.CLOUDFLARE_TURNSTILE_SECRET_KEY || '1x0000000000000000000000000000000AA',
-    ADMIN_EMAIL: process.env.ADMIN_EMAIL || 'admin@sabaalwadi.ae',
+    ADMIN_EMAIL: process.env.ADMIN_EMAIL || '',
 
     // Dynamic Delivery & Shipping Configuration
     shipping_base_fee: '30',
@@ -338,6 +346,7 @@ export class SiteSettingsService {
     'size_chart_image',
     'size_chart_guide_text',
     'size_chart_table',
+    'size_chart_columns',
     'BLOG_CATEGORIES',
     'CLOUDFLARE_TURNSTILE_SITE_KEY', // Only the public client site key
     'google_analytics_id',
@@ -345,7 +354,91 @@ export class SiteSettingsService {
     'google_search_console_tag',
     'GOOGLE_ANALYTICS_ID',
     'FACEBOOK_PIXEL_ID',
+    'GOOGLE_CLIENT_ID',
+    'FACEBOOK_APP_ID',
+    'default_currency',
+    'currency_rate_usd',
+    'currency_rate_gbp',
+    'currency_rate_eur',
+    'currency_last_updated',
+    'STRIPE_PUBLISHABLE_KEY',
+    'stripe_publishable_key',
+    'stripe_mode',
+    'stripe_configured',
   ]);
+
+  async onModuleInit() {
+    this.scheduleNightlyRateSync();
+  }
+
+  private rateSyncTimer: NodeJS.Timeout | null = null;
+
+  scheduleNightlyRateSync() {
+    const scheduleNext = () => {
+      const now = new Date();
+      // Calculate next midnight at 00:00:00
+      const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0);
+      const msUntilMidnight = Math.max(1000, nextMidnight.getTime() - now.getTime());
+
+      if (this.rateSyncTimer) {
+        clearTimeout(this.rateSyncTimer);
+      }
+
+      this.rateSyncTimer = setTimeout(async () => {
+        try {
+          console.log('[ExchangeRateService] Running scheduled nightly rate synchronization from AED base...');
+          await this.syncExchangeRates();
+        } catch (e) {
+          console.error('[ExchangeRateService] Nightly exchange rate sync failed:', e);
+        }
+        scheduleNext();
+      }, msUntilMidnight);
+    };
+
+    scheduleNext();
+  }
+
+  async syncExchangeRates(): Promise<{ success: boolean; rates: Record<string, string>; message: string }> {
+    try {
+      // Free public Open Exchange Rate API for AED base
+      const res = await fetch('https://open.er-api.com/v6/latest/AED');
+      if (!res.ok) {
+        throw new Error(`Exchange rate provider returned HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      if (!data || !data.rates) {
+        throw new Error('Invalid rate data format from provider');
+      }
+
+      // Base is always AED = 1
+      const usdRate = (data.rates.USD ? Number(data.rates.USD).toFixed(4) : '0.2723');
+      const gbpRate = (data.rates.GBP ? Number(data.rates.GBP).toFixed(4) : '0.2132');
+      const eurRate = (data.rates.EUR ? Number(data.rates.EUR).toFixed(4) : '0.2520');
+
+      const updated = {
+        default_currency: 'AED',
+        currency_rate_usd: usdRate,
+        currency_rate_gbp: gbpRate,
+        currency_rate_eur: eurRate,
+        currency_last_updated: new Date().toISOString(),
+      };
+
+      await this.upsertSettings(updated);
+
+      return {
+        success: true,
+        rates: updated,
+        message: `Successfully synchronized rates from AED base: USD ${usdRate}, GBP ${gbpRate}, EUR ${eurRate}`,
+      };
+    } catch (err: any) {
+      console.error('Exchange rate sync failed:', err);
+      return {
+        success: false,
+        rates: {},
+        message: err.message || 'Failed to sync exchange rates',
+      };
+    }
+  }
 
   async getPublicSettings(): Promise<Record<string, string>> {
     const all = await this.getAllSettings();
@@ -355,6 +448,17 @@ export class SiteSettingsService {
         publicSettings[key] = all[key];
       }
     }
+
+    const stripeSecret = all.STRIPE_SECRET_KEY || process.env.STRIPE_SECRET_KEY || '';
+    const isLive = stripeSecret.startsWith('sk_live_');
+    const isTest = stripeSecret.startsWith('sk_test_');
+    const isConfigured = Boolean(stripeSecret && stripeSecret !== 'sk_test_mock' && stripeSecret.trim().length > 10);
+
+    publicSettings['stripe_configured'] = isConfigured ? 'true' : 'false';
+    publicSettings['stripe_mode'] = isLive ? 'LIVE' : (isTest ? 'TEST' : (isConfigured ? 'LIVE' : 'TEST'));
+    publicSettings['stripe_publishable_key'] =
+      all.STRIPE_PUBLISHABLE_KEY || process.env.STRIPE_PUBLISHABLE_KEY || '';
+
     return publicSettings;
   }
 
@@ -373,13 +477,22 @@ export class SiteSettingsService {
   }
 
   async upsertSettings(settings: Record<string, string>) {
-    const ops = Object.entries(settings).map(([key, value]) =>
-      this.prisma.site_settings.upsert({
+    // Keep ADMIN_EMAIL in sync with ADMIN_EMAILS
+    if (settings['ADMIN_EMAILS'] !== undefined) {
+      const primaryEmail = (settings['ADMIN_EMAILS'] || '')
+        .split(',')[0]
+        .trim();
+      settings['ADMIN_EMAIL'] = primaryEmail;
+    }
+
+    const ops = Object.entries(settings).map(([key, value]) => {
+      const cleanVal = value !== undefined && value !== null ? String(value) : '';
+      return this.prisma.site_settings.upsert({
         where: { key },
-        update: { value: String(value) },
-        create: { key, value: String(value) },
-      })
-    );
+        update: { value: cleanVal },
+        create: { key, value: cleanVal },
+      });
+    });
     await Promise.all(ops);
     return this.getAllSettings();
   }

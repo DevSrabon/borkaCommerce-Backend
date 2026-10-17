@@ -20,6 +20,8 @@ import { HttpLoggerMiddleware } from './logger/http-logger.middleware';
 
 import { BlogsModule } from './blogs/blogs.module';
 import { RedisModule } from './redis/redis.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { RealtimeModule } from './realtime/realtime.module';
 
 @Module({
   imports: [
@@ -27,8 +29,10 @@ import { RedisModule } from './redis/redis.module';
       isGlobal: true,
     }),
     DatabaseModule,
+    RealtimeModule,
     AuthModule,
     MailModule,
+    NotificationsModule,
     ChatModule,
     PagesModule,
     BlogsModule,

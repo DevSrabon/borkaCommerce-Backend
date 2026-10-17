@@ -14,6 +14,7 @@ import type { Response } from 'express';
 import { ModuleRef } from '@nestjs/core';
 import { SiteSettingsService } from './site-settings.service';
 import { RedisService } from '../redis/redis.service';
+import { MailService } from '../mail/mail.service';
 import { AdminGuard } from '../auth/admin.guard';
 
 // ─── Public Storefront ─────────────────────────────────────────────────────
@@ -173,6 +174,35 @@ export class AdminSiteController {
       return { success: false, message: err.message };
     }
     return { success: false, message: 'Redis service not available' };
+  }
+
+  // SMTP Mail Server Test & Verification
+  @Post('settings/test-smtp')
+  async testSmtp(
+    @Body()
+    body?: {
+      host?: string;
+      port?: number | string;
+      user?: string;
+      pass?: string;
+      secure?: boolean | string;
+    },
+  ) {
+    try {
+      const mailService = this.moduleRef.get(MailService, { strict: false });
+      if (mailService) {
+        return await mailService.verifySmtp(body);
+      }
+      return { success: false, message: 'MailService not available' };
+    } catch (err: any) {
+      return { success: false, message: err.message };
+    }
+  }
+
+  // Currency Exchange Rate Synchronization
+  @Post('currency/sync-rates')
+  async syncExchangeRates() {
+    return this.svc.syncExchangeRates();
   }
 
   // Cache Clear

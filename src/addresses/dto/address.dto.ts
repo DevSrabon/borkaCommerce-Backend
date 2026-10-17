@@ -6,20 +6,24 @@ export class CreateAddressDto {
   country: string;
 
   @IsString()
+  @IsOptional()
+  phone?: string;
+
+  @IsString()
   @IsNotEmpty()
   city: string;
 
   @IsString()
-  @IsNotEmpty()
-  area: string;
+  @IsOptional()
+  area?: string;
 
   @IsString()
   @IsNotEmpty()
   street: string;
 
   @IsString()
-  @IsNotEmpty()
-  building: string;
+  @IsOptional()
+  building?: string;
 
   @IsString()
   @IsOptional()

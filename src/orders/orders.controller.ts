@@ -44,15 +44,58 @@ export class OrdersController {
     return this.ordersService.customerCancelOrder(customer.id, id);
   }
 
-  // --- STRIPE DIRECT CONFIRMATION (Without Webhook) ---
+  // --- STRIPE DIRECT CONFIRMATION (Legacy Fallback) ---
   @Post('ecommerce/orders/confirm-stripe')
   async confirmStripeDirect(
-    @Body() body: { order_id: string; payment_intent_id?: string },
+    @Body()
+    body: {
+      order_id: string;
+      payment_intent_id?: string;
+      card?: {
+        number: string;
+        exp_month: string | number;
+        exp_year: string | number;
+        cvc: string;
+        name?: string;
+      };
+    },
   ) {
     if (!body?.order_id) {
       throw new BadRequestException('order_id is required');
     }
-    return this.ordersService.confirmStripeDirect(body.order_id, body.payment_intent_id);
+    return this.ordersService.confirmStripeDirect(body.order_id, body.payment_intent_id, body.card);
+  }
+
+  // --- STRIPE CHECKOUT SESSION VERIFICATION (Redirect return) ---
+  @Post('ecommerce/orders/verify-stripe-session')
+  async verifyStripeSession(
+    @Body() body: { session_id: string; order_id?: string },
+  ) {
+    if (!body?.session_id) {
+      throw new BadRequestException('session_id is required');
+    }
+    return this.ordersService.verifyStripeSession(body.session_id, body.order_id);
+  }
+
+  // --- RETRY STRIPE PAYMENT FOR UNPAID ORDER ---
+  @Post('ecommerce/orders/:id/retry-stripe')
+  async retryStripePayment(
+    @Param('id') id: string,
+    @Body() body: { origin?: string },
+  ) {
+    return this.ordersService.createStripeCheckoutSessionForOrder(id, body?.origin);
+  }
+
+  // --- SWITCH UNPAID ORDER TO CASH ON DELIVERY ---
+  @Post('ecommerce/orders/:id/switch-to-cod')
+  async switchOrderToCod(@Param('id') id: string) {
+    return this.ordersService.switchOrderToCod(id);
+  }
+
+  // --- GET ORDER PAYMENT STATUS (For retry page & countdown) ---
+  @Get('ecommerce/orders/:id/payment-status')
+  async getOrderPaymentStatus(@Param('id') id: string) {
+    return this.ordersService.getOrderPaymentStatus(id);
   }
 
   // --- STRIPE WEBHOOK ---
@@ -134,8 +177,9 @@ export class OrdersController {
   // --- DELIVERY PARTNERS / COURIERS ---
 
   @Get('ecommerce/delivery-partners')
-  getDeliveryPartnersPublic() {
-    return this.ordersService.getDeliveryPartners();
+  async getDeliveryPartnersPublic() {
+    const { items } = await this.ordersService.getDeliveryPartners();
+    return items;
   }
 
   @UseGuards(AdminGuard)

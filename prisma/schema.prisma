@@ -622,6 +622,71 @@ model system_logs {
   @@index([method])
 }
 
+// 30.1. Enterprise Admin Audit Trail Logs (Stores POST, UPDATE, DELETE with Full Payloads)
+model audit_logs {
+  id          String   @id @default(uuid())
+  user_id     String?
+  user_email  String?
+  user_name   String?  @default("SABA AL WADI")
+  action      String   // 'CREATE' | 'UPDATE' | 'DELETE' | 'MUTATION' | 'LOGIN'
+  entity      String?  // e.g. 'PRODUCT', 'ORDER', 'CATEGORY', 'SETTINGS', etc.
+  method      String   // 'POST' | 'PATCH' | 'PUT' | 'DELETE' | 'LOGIN'
+  route       String
+  ip          String?
+  status      String   @default("Active")
+  status_code Int      @default(200)
+  payload     String?  @db.Text // Sanitized JSON payload
+  details     String?  @db.Text // Descriptive summary
+  created_at  DateTime @default(now())
+
+  @@index([created_at])
+  @@index([action])
+  @@index([method])
+  @@index([user_email])
+  @@index([route])
+}
+
+// 30.2. Email Dispatch Logs with Error Details & Retry Support
+model email_logs {
+  id           String    @id @default(uuid())
+  to           String
+  cc           String?
+  bcc          String?
+  subject      String
+  body_html    String    @db.Text
+  body_text    String?   @db.Text
+  status       String    @default("PENDING") // 'SENT' | 'FAILED' | 'PENDING'
+  error        String?   @db.Text
+  attempts     Int       @default(1)
+  last_attempt DateTime  @default(now())
+  created_at   DateTime  @default(now())
+
+  @@index([to])
+  @@index([status])
+  @@index([created_at])
+}
+
+// 30.3. Stripe API & Payment Event Logs
+model stripe_logs {
+  id            String    @id @default(uuid())
+  event_type    String    // 'PAYMENT_INTENT_CONFIRM', 'WEBHOOK_EVENT', 'CREATE_PAYMENT_INTENT', 'REFUND'
+  order_id      String?
+  customer_id   String?
+  status        String    // 'SUCCESS' | 'FAILED' | 'PENDING'
+  amount        Float?
+  currency      String?
+  error_code    String?
+  error_message String?   @db.Text
+  request_data  String?   @db.Text
+  response_data String?   @db.Text
+  created_at    DateTime  @default(now())
+
+  @@index([order_id])
+  @@index([status])
+  @@index([event_type])
+  @@index([created_at])
+}
+
 // 31. Blog Posts & Articles
 model blogs {
   id             String          @id @default(uuid())
@@ -676,5 +741,22 @@ model delivery_partners {
   updated_at            DateTime  @updatedAt
 
   @@index([is_active])
+}
+
+// 34. Admin Real-time Notifications
+model notifications {
+  id         String   @id @default(uuid())
+  type       String   // "ORDER", "REVIEW", "BLOG_COMMENT"
+  title      String
+  message    String   @db.Text
+  link       String?
+  is_read    Boolean  @default(false)
+  metadata   Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@index([is_read])
+  @@index([type])
+  @@index([created_at])
 }
 
