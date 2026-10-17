@@ -43,6 +43,7 @@ export class HttpLoggerMiddleware implements NestMiddleware {
     // User requirement:
     // "options, logs routes save hobe na."
     if (
+      process.env.ENABLE_HTTP_LOGGER === 'false' ||
       upperMethod === 'OPTIONS' ||
       route.includes('/logs') ||
       route.startsWith('/admin/logs')
