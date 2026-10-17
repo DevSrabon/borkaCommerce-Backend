@@ -31,6 +31,21 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     this.logger.log(`[Socket.IO] Client disconnected: ${client.id}`);
   }
 
+  private activityCallbacks: ((sessionId: string) => void)[] = [];
+
+  onCustomerActivity(cb: (sessionId: string) => void) {
+    this.activityCallbacks.push(cb);
+  }
+
+  notifyActivity(sessionId: string) {
+    if (!sessionId) return;
+    for (const cb of this.activityCallbacks) {
+      try {
+        cb(sessionId);
+      } catch (_) {}
+    }
+  }
+
   // Admin joins global administrative room
   @SubscribeMessage('join_admin')
   handleJoinAdmin(@ConnectedSocket() client: Socket) {
@@ -48,8 +63,20 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     if (data?.session_id) {
       const room = `session_${data.session_id}`;
       client.join(room);
+      this.notifyActivity(data.session_id);
       this.logger.log(`[Socket.IO] Client ${client.id} joined room ${room}`);
       return { status: 'joined', room };
+    }
+  }
+
+  @SubscribeMessage('customer_presence')
+  handleCustomerPresence(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { session_id: string },
+  ) {
+    if (data?.session_id) {
+      this.notifyActivity(data.session_id);
+      return { status: 'presence_ack' };
     }
   }
 
@@ -79,6 +106,7 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   ) {
     if (data?.session_id) {
       const room = `session_${data.session_id}`;
+      this.notifyActivity(data.session_id);
       // Broadcast to everybody else in the session room & to admin room
       client.to(room).emit('chat_typing', data);
       client.to('admin').emit('chat_typing', data);
@@ -118,7 +146,7 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   }
 
   /**
-   * Broadcast updated unread count to admins
+   * Broadcast updated notification unread count to admins
    */
   emitUnreadCount(count: number) {
     try {
@@ -127,6 +155,19 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
       }
     } catch (err: any) {
       this.logger.warn(`Failed to emit unread count: ${err.message}`);
+    }
+  }
+
+  /**
+   * Broadcast updated chat unread total to admins
+   */
+  emitChatUnreadCount(count: number) {
+    try {
+      if (this.server) {
+        this.server.to('admin').emit('admin_chat_unread_count', { unread_total: count });
+      }
+    } catch (err: any) {
+      this.logger.warn(`Failed to emit chat unread count: ${err.message}`);
     }
   }
 

@@ -71,26 +71,40 @@ export class NotificationsService {
   }
 
   async markAsRead(id: string) {
-    return (this.prisma as any).notifications.update({
+    const updated = await (this.prisma as any).notifications.update({
       where: { id },
       data: { is_read: true },
     });
+    const unreadCount = await (this.prisma as any).notifications.count({
+      where: { is_read: false },
+    });
+    this.realtimeGateway.emitUnreadCount(unreadCount);
+    return updated;
   }
 
   async markAllAsRead() {
-    return (this.prisma as any).notifications.updateMany({
+    const res = await (this.prisma as any).notifications.updateMany({
       where: { is_read: false },
       data: { is_read: true },
     });
+    this.realtimeGateway.emitUnreadCount(0);
+    return res;
   }
 
   async clearAll() {
-    return (this.prisma as any).notifications.deleteMany();
+    const res = await (this.prisma as any).notifications.deleteMany();
+    this.realtimeGateway.emitUnreadCount(0);
+    return res;
   }
 
   async delete(id: string) {
-    return (this.prisma as any).notifications.delete({
+    const res = await (this.prisma as any).notifications.delete({
       where: { id },
     });
+    const unreadCount = await (this.prisma as any).notifications.count({
+      where: { is_read: false },
+    });
+    this.realtimeGateway.emitUnreadCount(unreadCount);
+    return res;
   }
 }

@@ -84,7 +84,7 @@ export class ChatController {
       },
     }),
   )
-  async uploadChatAttachment(@UploadedFile() file: any) {
+  async uploadChatAttachment(@UploadedFile() file: any, @Req() req: any) {
     if (!file) {
       throw new BadRequestException('No attachment file provided');
     }
@@ -93,8 +93,12 @@ export class ChatController {
       file.mimetype?.startsWith('image/') ||
       /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(file.originalname);
 
+    const host = req?.get ? (req.get('x-forwarded-host') || req.get('host')) : undefined;
+    const proto = req?.get ? (req.get('x-forwarded-proto') || req.protocol || 'https') : 'https';
+    const baseUrl = process.env.UPLOAD_PUBLIC_BASE_URL || (host ? `${proto}://${host}` : 'http://localhost:8080');
+
     return {
-      attachment_url: `http://localhost:8080/uploads${relativePath}`,
+      attachment_url: `${baseUrl.replace(/\/+$/, '')}/uploads${relativePath}`,
       attachment_type: isImage ? 'image' : 'file',
       attachment_name: file.originalname,
       size: file.size,

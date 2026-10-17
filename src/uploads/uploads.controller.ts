@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, UseGuards, UseInterceptors, UploadedFile, BadRequestException, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Req, UseGuards, UseInterceptors, UploadedFile, BadRequestException, Query } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
@@ -87,6 +87,7 @@ export class UploadsController {
   )
   async uploadMedia(
     @UploadedFile() file: any,
+    @Req() req: any,
     @Query('folder') folderQuery?: string,
     @Body('folder') bodyFolder?: string,
   ) {
@@ -97,7 +98,11 @@ export class UploadsController {
     const allowed = ['media', 'product', 'customer', 'banner', 'category', 'blog', 'chat'];
     const folder = allowed.includes(queryFolder) ? queryFolder : 'media';
 
-    const res = await this.uploadFilesService.processUploadedFile(folder, file.filename, file.path);
+    const host = req?.get ? (req.get('x-forwarded-host') || req.get('host')) : undefined;
+    const proto = req?.get ? (req.get('x-forwarded-proto') || req.protocol || 'https') : 'https';
+    const dynamicBase = host ? `${proto}://${host}` : undefined;
+
+    const res = await this.uploadFilesService.processUploadedFile(folder, file.filename, file.path, dynamicBase);
     return {
       ...res,
       url: res.imageUrl,

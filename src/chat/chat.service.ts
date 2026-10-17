@@ -34,7 +34,11 @@ export class ChatService {
     private prisma: PrismaService,
     private mailService: MailService,
     private realtimeGateway: RealtimeGateway,
-  ) {}
+  ) {
+    this.realtimeGateway.onCustomerActivity((sessionId) => {
+      this.recordCustomerActivity(sessionId);
+    });
+  }
 
   /**
    * Record admin presence (polled unread count, opened sessions, replied, or typed)
@@ -297,6 +301,9 @@ export class ChatService {
 
     // Real-Time Socket.IO broadcast
     this.realtimeGateway.emitChatMessage(sessionId, customerMsg);
+    this.getAdminUnreadTotal().then((unread) => {
+      this.realtimeGateway.emitChatUnreadCount(unread.unread_total);
+    }).catch(() => {});
 
     // 5. Intelligent FAQ auto-guidance bot response
     const msgText = (message || '').toLowerCase();
@@ -482,10 +489,13 @@ export class ChatService {
         where: { session_id: sessionId, sender_type: 'CUSTOMER', is_read: false },
         data: { is_read: true },
       });
-      return this.prisma.chat_sessions.update({
+      const updated = await this.prisma.chat_sessions.update({
         where: { session_id: sessionId },
         data: { unread_admin_count: 0 },
       });
+      const unread = await this.getAdminUnreadTotal();
+      this.realtimeGateway.emitChatUnreadCount(unread.unread_total);
+      return updated;
     } else {
       await this.prisma.chat_messages.updateMany({
         where: { session_id: sessionId, sender_type: { in: ['ADMIN', 'BOT'] }, is_read: false },
@@ -556,7 +566,7 @@ export class ChatService {
 
     this.realtimeGateway.emitSessionDeleted(sessionId);
     const unread = await this.getAdminUnreadTotal();
-    this.realtimeGateway.emitUnreadCount(unread.unread_total);
+    this.realtimeGateway.emitChatUnreadCount(unread.unread_total);
 
     return { success: true, session_id: sessionId, deleted_count: deleted.count };
   }
@@ -574,7 +584,7 @@ export class ChatService {
     this.sessionLastInactiveNoticeMap.clear();
 
     this.realtimeGateway.emitAllSessionsDeleted();
-    this.realtimeGateway.emitUnreadCount(0);
+    this.realtimeGateway.emitChatUnreadCount(0);
 
     return {
       success: true,

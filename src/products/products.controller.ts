@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, Res, UseGuards, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, Res, Req, UseGuards, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
 import type { Response } from 'express';
 import { ProductsService } from './products.service';
 import { CreateProductDto, UpdateProductDto } from './dto/product.dto';
@@ -24,13 +24,16 @@ export class ProductsController {
   @UseInterceptors(
     FileInterceptor('image', { storage: imageUploadMiddleware('product') }),
   )
-  uploadProductImage(@UploadedFile() file: any) {
+  uploadProductImage(@UploadedFile() file: any, @Req() req: any) {
     if (!file) {
       throw new BadRequestException('No file uploaded');
     }
+    const host = req?.get ? (req.get('x-forwarded-host') || req.get('host')) : undefined;
+    const proto = req?.get ? (req.get('x-forwarded-proto') || req.protocol || 'https') : 'https';
+    const dynamicBase = host ? `${proto}://${host}` : undefined;
     const imagePath = this.uploadFilesService.relativePath('product', file.filename);
     return {
-      imageUrl: this.uploadFilesService.imageUrl(imagePath),
+      imageUrl: this.uploadFilesService.imageUrl(imagePath, dynamicBase),
       imagePath,
     };
   }
@@ -57,16 +60,19 @@ export class ProductsController {
       }),
     }),
   )
-  uploadAdminImage(@Param('folder') folder: string, @UploadedFile() file: any) {
+  uploadAdminImage(@Param('folder') folder: string, @UploadedFile() file: any, @Req() req: any) {
     if (!this.uploadFilesService.isSupportedFolder(folder)) {
       throw new BadRequestException('Unsupported upload folder');
     }
     if (!file) {
       throw new BadRequestException('No file uploaded');
     }
+    const host = req?.get ? (req.get('x-forwarded-host') || req.get('host')) : undefined;
+    const proto = req?.get ? (req.get('x-forwarded-proto') || req.protocol || 'https') : 'https';
+    const dynamicBase = host ? `${proto}://${host}` : undefined;
     const imagePath = this.uploadFilesService.relativePath(folder, file.filename);
     return {
-      imageUrl: this.uploadFilesService.imageUrl(imagePath),
+      imageUrl: this.uploadFilesService.imageUrl(imagePath, dynamicBase),
       imagePath,
     };
   }

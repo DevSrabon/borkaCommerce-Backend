@@ -22,11 +22,18 @@ export class UploadFilesService {
     return `/${folder}/${filename}`;
   }
 
-  imageUrl(relativePath: string) {
+  imageUrl(relativePath: string, fallbackBase?: string) {
     if (relativePath.startsWith('http://') || relativePath.startsWith('https://')) {
       return relativePath;
     }
-    return `${process.env.UPLOAD_PUBLIC_BASE_URL ?? 'http://localhost:8080'}/uploads${relativePath}`;
+    const base =
+      process.env.UPLOAD_PUBLIC_BASE_URL ||
+      process.env.BACKEND_URL ||
+      process.env.API_BASE_URL ||
+      process.env.APP_URL ||
+      fallbackBase ||
+      'http://localhost:8080';
+    return `${base.replace(/\/+$/, '')}/uploads${relativePath}`;
   }
 
   async remove(relativePath: string, expectedFolder: UploadFolder) {
@@ -59,7 +66,7 @@ export class UploadFilesService {
   /**
    * Process a saved file: uploads to Cloudflare R2, AWS S3, Cloudinary, or retains in local storage.
    */
-  async processUploadedFile(folder: string, filename: string, localFilePath: string) {
+  async processUploadedFile(folder: string, filename: string, localFilePath: string, fallbackBase?: string) {
     const driver =
       (await this.siteSettingsService.getSetting('STORAGE_DRIVER')) ||
       (await this.siteSettingsService.getSetting('asset_storage_driver', 'local'));
@@ -222,7 +229,7 @@ export class UploadFilesService {
     // 4. LOCAL DISK STORAGE (Default)
     const relPath = this.relativePath(folder, filename);
     return {
-      imageUrl: this.imageUrl(relPath),
+      imageUrl: this.imageUrl(relPath, fallbackBase),
       imagePath: relPath,
       storage: 'local',
     };
