@@ -34,7 +34,7 @@ export class UploadsController {
   @Get()
   async getMedia() {
     const uploadsRoot = join(process.cwd(), 'uploads');
-    const folders = ['product', 'customer', 'banner', 'category', 'blog', 'migrated'];
+    const folders = ['media', 'product', 'customer', 'banner', 'category', 'blog', 'migrated'];
     const mediaList: { url: string; path: string; name: string; folder: string }[] = [];
 
     for (const folder of folders) {
@@ -47,7 +47,7 @@ export class UploadsController {
             if (stat.isFile()) {
               const relativePath = `/${folder}/${file}`;
               mediaList.push({
-                url: `http://localhost:8080/uploads${relativePath}`,
+                url: this.uploadFilesService.imageUrl(relativePath),
                 path: relativePath,
                 name: file,
                 folder: folder,
@@ -68,9 +68,9 @@ export class UploadsController {
     FileInterceptor('image', {
       storage: diskStorage({
         destination: (req, file, callback) => {
-          const queryFolder = (req.query.folder as string) || 'product';
-          const allowed = ['product', 'customer', 'banner', 'category', 'blog'];
-          const folder = allowed.includes(queryFolder) ? queryFolder : 'product';
+          const queryFolder = (((req.query.folder as string) || (req.body && req.body.folder)) || 'media').toLowerCase();
+          const allowed = ['media', 'product', 'customer', 'banner', 'category', 'blog', 'chat'];
+          const folder = allowed.includes(queryFolder) ? queryFolder : 'media';
           const dest = join(process.cwd(), 'uploads', folder);
           if (!fs.existsSync(dest)) {
             fs.mkdirSync(dest, { recursive: true });
@@ -85,14 +85,22 @@ export class UploadsController {
       }),
     }),
   )
-  async uploadMedia(@UploadedFile() file: any, @Query('folder') folderQuery?: string) {
+  async uploadMedia(
+    @UploadedFile() file: any,
+    @Query('folder') folderQuery?: string,
+    @Body('folder') bodyFolder?: string,
+  ) {
     if (!file) {
       throw new BadRequestException('No file uploaded');
     }
-    const queryFolder = folderQuery || 'product';
-    const allowed = ['product', 'customer', 'banner', 'category', 'blog'];
-    const folder = allowed.includes(queryFolder) ? queryFolder : 'product';
+    const queryFolder = (folderQuery || bodyFolder || 'media').toLowerCase();
+    const allowed = ['media', 'product', 'customer', 'banner', 'category', 'blog', 'chat'];
+    const folder = allowed.includes(queryFolder) ? queryFolder : 'media';
 
-    return this.uploadFilesService.processUploadedFile(folder, file.filename, file.path);
+    const res = await this.uploadFilesService.processUploadedFile(folder, file.filename, file.path);
+    return {
+      ...res,
+      url: res.imageUrl,
+    };
   }
 }

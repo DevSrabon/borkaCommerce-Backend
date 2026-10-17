@@ -14,7 +14,7 @@ async function bootstrap() {
 
   // Ensure uploads folder and sub-folders exist
   const uploadsPath = path.join(process.cwd(), 'uploads');
-  const subFolders = ['product', 'customer', 'banner', 'category', 'chat'];
+  const subFolders = ['media', 'product', 'customer', 'banner', 'category', 'chat', 'blog'];
   for (const folder of [uploadsPath, ...subFolders.map((f) => path.join(uploadsPath, f))]) {
     if (!fs.existsSync(folder)) fs.mkdirSync(folder, { recursive: true });
   }

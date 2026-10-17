@@ -3,7 +3,7 @@ import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import * as fs from 'fs';
 
-export const uploadFolders = ['product', 'customer', 'banner', 'category'] as const;
+export const uploadFolders = ['media', 'product', 'customer', 'banner', 'category', 'blog', 'chat'] as const;
 export type UploadFolder = (typeof uploadFolders)[number];
 
 /**
