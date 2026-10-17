@@ -2,7 +2,16 @@ import { Injectable } from '@nestjs/common';
 
 @Injectable()
 export class AppService {
-  getHello(): string {
-    return 'Hello World!';
+  getHello() {
+    return {
+      success: true,
+      name: 'Saba Al Wadi API (BorkaCommerce)',
+      version: '1.0.0',
+      status: 'operational',
+      message: 'Welcome to Saba Al Wadi E-Commerce API Service',
+      documentation: '/api/docs',
+      health: '/health',
+      timestamp: new Date().toISOString(),
+    };
   }
 }
