@@ -1,12 +1,12 @@
 import { PrismaClient, product_status, variant_status, discount_type, offer_type, offer_status } from '@prisma/client';
 import * as crypto from 'crypto';
 
+import * as bcrypt from 'bcryptjs';
+
 const prisma = new PrismaClient();
 
 function hashPassword(password: string): string {
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
-  return `${salt}:${hash}`;
+  return bcrypt.hashSync(password, 10);
 }
 
 async function main() {

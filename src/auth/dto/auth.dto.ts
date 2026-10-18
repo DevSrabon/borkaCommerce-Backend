@@ -164,3 +164,25 @@ export class ChangePasswordDto {
   new_password: string;
 }
 
+export class ForgotPasswordDto {
+  @IsEmail({}, { message: 'A valid email address is required' })
+  @IsNotEmpty()
+  email: string;
+}
+
+export class ResetPasswordDto {
+  @IsEmail({}, { message: 'A valid email address is required' })
+  @IsNotEmpty()
+  email: string;
+
+  @IsString()
+  @IsNotEmpty({ message: 'Verification code is required' })
+  otp: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(6, { message: 'Password must be at least 6 characters long' })
+  new_password: string;
+}
+
+

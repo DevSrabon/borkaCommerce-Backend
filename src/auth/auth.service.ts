@@ -1,8 +1,9 @@
 import { Injectable, UnauthorizedException, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { MailService } from '../mail/mail.service';
-import { RegisterDto, LoginDto, CreateAdminDto, UpdateCustomerDto, VerifyOtpDto, ResendOtpDto, SocialLoginDto, UpdateProfileDto, ChangePasswordDto } from './dto/auth.dto';
+import { RegisterDto, LoginDto, CreateAdminDto, UpdateCustomerDto, VerifyOtpDto, ResendOtpDto, SocialLoginDto, UpdateProfileDto, ChangePasswordDto, ForgotPasswordDto, ResetPasswordDto } from './dto/auth.dto';
 import * as crypto from 'crypto';
+import * as bcrypt from 'bcryptjs';
 
 @Injectable()
 export class AuthService {
@@ -11,18 +12,38 @@ export class AuthService {
     private mailService: MailService,
   ) {}
 
-  // Secure native hashing using PBKDF2
+  // Secure hashing using bcryptjs
   private hashPassword(password: string): string {
-    const salt = crypto.randomBytes(16).toString('hex');
-    const hash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
-    return `${salt}:${hash}`;
+    return bcrypt.hashSync(password, 10);
   }
 
   private verifyPassword(password: string, storedHash: string): boolean {
-    const [salt, hash] = storedHash.split(':');
-    if (!salt || !hash) return false;
-    const computedHash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
-    return computedHash === hash;
+    if (!storedHash) return false;
+
+    // Normalize $2y$ prefix (e.g. from PHP/Laravel bcrypt) to $2a$ for bcryptjs
+    const normalizedHash = storedHash.startsWith('$2y$')
+      ? storedHash.replace(/^\$2y\$/, '$2a$')
+      : storedHash;
+
+    // Check standard bcrypt hashes ($2a$, $2b$, $2y$)
+    if (normalizedHash.startsWith('$2')) {
+      try {
+        return bcrypt.compareSync(password, normalizedHash);
+      } catch {
+        return false;
+      }
+    }
+
+    // Backward compatibility fallback for legacy PBKDF2 hashes (salt:hash format)
+    if (storedHash.includes(':')) {
+      const [salt, hash] = storedHash.split(':');
+      if (salt && hash) {
+        const computedHash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
+        return computedHash === hash;
+      }
+    }
+
+    return false;
   }
 
   private async createSession(customer: any) {
@@ -96,37 +117,13 @@ export class AuthService {
   async register(dto: RegisterDto) {
     await this.verifyTurnstile(dto.captcha_token);
 
+    const email = dto.email.trim().toLowerCase();
     const existing = await this.prisma.customers.findUnique({
-      where: { email: dto.email.toLowerCase() },
+      where: { email },
     });
 
     if (existing) {
-      if (!existing.email_verified) {
-        // Customer registered before but hasn't verified email, allow resending OTP!
-        const otp = Math.floor(100000 + Math.random() * 900000).toString();
-        const otp_expires_at = new Date(Date.now() + 10 * 60 * 1000);
-        await this.prisma.customers.update({
-          where: { id: existing.id },
-          data: {
-            otp_code: otp,
-            otp_expires_at,
-          },
-        });
-        await this.mailService.sendOtpEmail(existing.email, otp, existing.first_name);
-        return {
-          message: 'An unverified account exists. A new verification code has been sent to your email.',
-          email: existing.email,
-          requires_otp: true,
-          dev_otp: otp,
-          customer: {
-            id: existing.id,
-            first_name: existing.first_name,
-            last_name: existing.last_name,
-            email: existing.email,
-          },
-        };
-      }
-      throw new BadRequestException('Email address is already registered');
+      throw new BadRequestException('An account with this email already exists');
     }
 
     const hashedPassword = this.hashPassword(dto.password);
@@ -389,6 +386,82 @@ export class AuthService {
     };
   }
 
+  async forgotPassword(dto: ForgotPasswordDto) {
+    const email = dto.email.trim().toLowerCase();
+    const customer = await this.prisma.customers.findUnique({
+      where: { email },
+    });
+
+    if (!customer) {
+      return {
+        message: 'If an account exists with this email, a 6-digit verification code has been sent.',
+        email,
+      };
+    }
+
+    if (customer.is_blocked) {
+      throw new UnauthorizedException('Your account has been suspended or blocked.');
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp_expires_at = new Date(Date.now() + 15 * 60 * 1000);
+
+    await this.prisma.customers.update({
+      where: { id: customer.id },
+      data: {
+        otp_code: otp,
+        otp_expires_at,
+      },
+    });
+
+    await this.mailService.sendPasswordResetEmail(customer.email, otp, customer.first_name);
+
+    return {
+      message: 'A 6-digit password reset code has been sent to your email.',
+      email: customer.email,
+      dev_otp: otp,
+    };
+  }
+
+  async resetPassword(dto: ResetPasswordDto) {
+    const email = dto.email.trim().toLowerCase();
+    const customer = await this.prisma.customers.findUnique({
+      where: { email },
+    });
+
+    if (!customer) {
+      throw new NotFoundException('Customer account not found.');
+    }
+
+    if (customer.is_blocked) {
+      throw new UnauthorizedException('Your account has been suspended or blocked.');
+    }
+
+    if (!customer.otp_code || customer.otp_code !== dto.otp.trim()) {
+      throw new BadRequestException('Invalid verification code entered. Please check your email and try again.');
+    }
+
+    if (customer.otp_expires_at && new Date() > customer.otp_expires_at) {
+      throw new BadRequestException('Verification code has expired. Please request a new reset code.');
+    }
+
+    const hashedPassword = this.hashPassword(dto.new_password);
+    await this.prisma.customers.update({
+      where: { id: customer.id },
+      data: {
+        password: hashedPassword,
+        otp_code: null,
+        otp_expires_at: null,
+        email_verified: true,
+      },
+    });
+
+    return {
+      message: 'Your password has been reset successfully! You can now sign in with your new password.',
+      success: true,
+    };
+  }
+
   async getSocialConfig() {
     const settings = await this.prisma.site_settings.findMany({
       where: {
@@ -423,22 +496,12 @@ export class AuthService {
   }
 
   async createAdmin(dto: CreateAdminDto) {
+    const email = dto.email.trim().toLowerCase();
     const existing = await this.prisma.customers.findUnique({
-      where: { email: dto.email.toLowerCase() },
+      where: { email },
     });
     if (existing) {
-      const updated = await this.prisma.customers.update({
-        where: { email: dto.email.toLowerCase() },
-        data: { role: 'ADMIN', is_blocked: false },
-      });
-      return {
-        id: updated.id,
-        first_name: updated.first_name,
-        last_name: updated.last_name,
-        email: updated.email,
-        role: updated.role,
-        avatar_url: updated.avatar_url,
-      };
+      throw new BadRequestException('An account with this email already exists');
     }
 
     const hashedPassword = this.hashPassword(dto.password);
@@ -568,7 +631,18 @@ export class AuthService {
     const updateData: any = {};
     if (dto.first_name !== undefined) updateData.first_name = dto.first_name;
     if (dto.last_name !== undefined) updateData.last_name = dto.last_name;
-    if (dto.email !== undefined) updateData.email = dto.email.toLowerCase();
+    if (dto.email !== undefined) {
+      const targetEmail = dto.email.trim().toLowerCase();
+      if (targetEmail !== customer.email) {
+        const existingEmail = await this.prisma.customers.findUnique({
+          where: { email: targetEmail },
+        });
+        if (existingEmail) {
+          throw new BadRequestException('An account with this email already exists');
+        }
+      }
+      updateData.email = targetEmail;
+    }
     if (dto.phone !== undefined) updateData.phone = dto.phone;
     if (dto.role !== undefined) updateData.role = dto.role;
     if (dto.is_blocked !== undefined) updateData.is_blocked = dto.is_blocked;

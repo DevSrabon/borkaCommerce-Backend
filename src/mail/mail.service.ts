@@ -358,6 +358,40 @@ export class MailService {
     return true;
   }
 
+  async sendPasswordResetEmail(email: string, otp: string, firstName: string): Promise<boolean> {
+    const subject = `Password Reset Request - Saba Al Wadi [Code: ${otp}]`;
+    const html = `
+      <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; padding: 30px; background-color: #0c0a09; color: #f5f5f4; border: 1px solid #292524; border-radius: 8px;">
+        <div style="text-align: center; margin-bottom: 25px;">
+          <h1 style="color: #d4af37; margin: 0; font-size: 24px; letter-spacing: 2px;">SABA AL WADI</h1>
+          <p style="color: #a8a29e; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 5px;">Password Reset Verification</p>
+        </div>
+        <div style="background-color: #1c1917; padding: 25px; border-radius: 6px; border: 1px solid #44403c;">
+          <p style="font-size: 15px; color: #e7e5e4; margin-top: 0;">Dear ${firstName || 'Customer'},</p>
+          <p style="font-size: 13px; color: #a8a29e; line-height: 1.6;">We received a request to reset your Saba Al Wadi account password. Please use the following 6-digit verification code:</p>
+          <div style="text-align: center; margin: 30px 0;">
+            <span style="display: inline-block; font-family: monospace; font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #d4af37; background-color: #0c0a09; padding: 12px 28px; border: 1px dashed #d4af37; border-radius: 4px;">${otp}</span>
+          </div>
+          <p style="font-size: 12px; color: #78716c; margin-bottom: 0;">This code is valid for <strong>15 minutes</strong>. If you did not request a password reset, you can safely ignore this email; your account remains secure.</p>
+        </div>
+        <div style="text-align: center; margin-top: 25px; font-size: 11px; color: #57534e;">
+          &copy; ${new Date().getFullYear()} Saba Al Wadi Couture LLC. Dubai, United Arab Emirates.
+        </div>
+      </div>
+    `;
+
+    this.logger.log(`\n========================================\n[PASSWORD RESET OTP] To: ${email} | OTP: ${otp}\n========================================`);
+
+    await this.dispatchMail({
+      to: email,
+      subject,
+      html,
+      text: `Your Saba Al Wadi Password Reset OTP is: ${otp}`,
+    });
+
+    return true;
+  }
+
   async sendOrderConfirmation(
     email: string,
     firstName: string,
