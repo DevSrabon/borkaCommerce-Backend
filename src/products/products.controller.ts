@@ -152,11 +152,29 @@ export class ProductsController {
   async findAllAdmin(
     @Query('limit') limit?: string,
     @Query('skip') skip?: string,
+    @Query('search') search?: string,
+    @Query('category_id') categoryId?: string,
+    @Query('status') status?: string,
+    @Query('is_featured') isFeatured?: string,
     @Res({ passthrough: true }) res?: Response,
   ) {
     const limitNum = limit ? parseInt(limit, 10) : 50;
     const skipNum = skip ? parseInt(skip, 10) : 0;
-    const { items, total } = await this.productsService.findAllAdmin(limitNum, skipNum);
+    const featured =
+      isFeatured === 'true' || isFeatured === 'FEATURED'
+        ? true
+        : isFeatured === 'false' || isFeatured === 'NOT_FEATURED'
+        ? false
+        : undefined;
+
+    const { items, total } = await this.productsService.findAllAdmin(
+      limitNum,
+      skipNum,
+      search,
+      categoryId,
+      status,
+      featured,
+    );
     if (res) {
       res.setHeader('x-total-count', total.toString());
     }

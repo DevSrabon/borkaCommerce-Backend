@@ -215,13 +215,59 @@ export class ProductsService {
     });
   }
 
-  async findAllAdmin(limit = 50, skip = 0) {
+  async findAllAdmin(
+    limit = 50,
+    skip = 0,
+    search?: string,
+    categoryId?: string,
+    status?: string,
+    isFeatured?: boolean,
+  ) {
     const take = Number(limit) > 0 ? Number(limit) : 50;
     const skipCount = Number(skip) >= 0 ? Number(skip) : 0;
 
+    const where: any = { deleted_at: null };
+
+    if (isFeatured !== undefined) {
+      where.is_featured = isFeatured;
+    }
+
+    if (status && status !== 'ALL') {
+      where.status = status;
+    }
+
+    if (categoryId && categoryId !== 'ALL') {
+      where.product_categories = {
+        some: {
+          OR: [
+            { category_id: categoryId },
+            { category: { id: categoryId } },
+            { category: { slug: categoryId } },
+          ],
+        },
+      };
+    }
+
+    if (search && search.trim()) {
+      const q = search.trim();
+      where.OR = [
+        { product_number: { contains: q, mode: 'insensitive' } },
+        { name: { contains: q, mode: 'insensitive' } },
+        { slug: { contains: q, mode: 'insensitive' } },
+        { tags: { contains: q, mode: 'insensitive' } },
+        {
+          variants: {
+            some: {
+              sku: { contains: q, mode: 'insensitive' },
+            },
+          },
+        },
+      ];
+    }
+
     const [products, total] = await Promise.all([
       this.prisma.products.findMany({
-        where: { deleted_at: null },
+        where,
         take,
         skip: skipCount,
         include: {
@@ -248,7 +294,7 @@ export class ProductsService {
         orderBy: { created_at: 'desc' },
       }),
       this.prisma.products.count({
-        where: { deleted_at: null },
+        where,
       }),
     ]);
 
