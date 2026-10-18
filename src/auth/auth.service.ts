@@ -162,6 +162,8 @@ export class AuthService {
   }
 
   async verifyOtp(dto: VerifyOtpDto) {
+    await this.verifyTurnstile(dto.captcha_token);
+
     const customer = await this.prisma.customers.findUnique({
       where: { email: dto.email.toLowerCase() },
     });
@@ -199,6 +201,8 @@ export class AuthService {
   }
 
   async resendOtp(dto: ResendOtpDto) {
+    await this.verifyTurnstile(dto.captcha_token);
+
     const customer = await this.prisma.customers.findUnique({
       where: { email: dto.email.toLowerCase() },
     });
@@ -387,6 +391,8 @@ export class AuthService {
   }
 
   async forgotPassword(dto: ForgotPasswordDto) {
+    await this.verifyTurnstile(dto.captcha_token);
+
     const email = dto.email.trim().toLowerCase();
     const customer = await this.prisma.customers.findUnique({
       where: { email },
@@ -424,6 +430,8 @@ export class AuthService {
   }
 
   async resetPassword(dto: ResetPasswordDto) {
+    await this.verifyTurnstile(dto.captcha_token);
+
     const email = dto.email.trim().toLowerCase();
     const customer = await this.prisma.customers.findUnique({
       where: { email },

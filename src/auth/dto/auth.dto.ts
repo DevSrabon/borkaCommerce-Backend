@@ -101,12 +101,20 @@ export class VerifyOtpDto {
   @IsString()
   @IsNotEmpty()
   otp: string;
+
+  @IsString()
+  @IsOptional()
+  captcha_token?: string;
 }
 
 export class ResendOtpDto {
   @IsEmail()
   @IsNotEmpty()
   email: string;
+
+  @IsString()
+  @IsOptional()
+  captcha_token?: string;
 }
 
 export class SocialLoginDto {
@@ -168,6 +176,10 @@ export class ForgotPasswordDto {
   @IsEmail({}, { message: 'A valid email address is required' })
   @IsNotEmpty()
   email: string;
+
+  @IsString()
+  @IsOptional()
+  captcha_token?: string;
 }
 
 export class ResetPasswordDto {
@@ -183,6 +195,10 @@ export class ResetPasswordDto {
   @IsNotEmpty()
   @MinLength(6, { message: 'Password must be at least 6 characters long' })
   new_password: string;
+
+  @IsString()
+  @IsOptional()
+  captcha_token?: string;
 }
 
 
