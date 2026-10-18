@@ -31,9 +31,12 @@ export class UploadFilesService {
       process.env.BACKEND_URL ||
       process.env.API_BASE_URL ||
       process.env.APP_URL ||
-      fallbackBase ||
-      'http://localhost:8080';
-    return `${base.replace(/\/+$/, '')}/uploads${relativePath}`;
+      fallbackBase;
+    if (!base || base.includes('localhost:8080') || base.includes('127.0.0.1:8080')) {
+      // In production or when dynamic host is unavailable, return relative path so the frontend resolves it correctly
+      return `/uploads${relativePath.startsWith('/') ? '' : '/'}${relativePath}`;
+    }
+    return `${base.replace(/\/+$/, '')}/uploads${relativePath.startsWith('/') ? '' : '/'}${relativePath}`;
   }
 
   async remove(relativePath: string, expectedFolder: UploadFolder) {

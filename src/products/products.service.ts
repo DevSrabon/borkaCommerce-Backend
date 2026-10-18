@@ -892,7 +892,11 @@ export class ProductsService {
       where: whereClause,
       include: {
         product_categories: {
-          include: { category: true },
+          include: {
+            category: {
+              include: { parent: true },
+            },
+          },
         },
         images: {
           orderBy: { sort_order: 'asc' },
@@ -1052,7 +1056,16 @@ export class ProductsService {
         thumbnail: prod.images.find((img) => img.is_thumbnail)?.image_url || prod.images[0]?.image_url || null,
         images: prod.images.map((img) => img.image_url),
         image_objects: prod.images.map((img) => ({ image_url: img.image_url, alt_text: (img as any).alt_text })),
-        categories: prod.product_categories.map((pc) => ({ id: pc.category.id, name: pc.category.name, slug: pc.category.slug })),
+        categories: prod.product_categories.flatMap((pc) => {
+          const list: { id: string; name: string; slug: string }[] = [
+            { id: pc.category.id, name: pc.category.name, slug: pc.category.slug },
+          ];
+          if ((pc.category as any)?.parent) {
+            const p = (pc.category as any).parent;
+            list.push({ id: p.id, name: p.name, slug: p.slug });
+          }
+          return list;
+        }),
         min_price: minPrice,
         min_original_price: minOriginalPrice,
         on_sale: isDiscounted,

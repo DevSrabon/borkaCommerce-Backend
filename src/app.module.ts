@@ -22,6 +22,7 @@ import { BlogsModule } from './blogs/blogs.module';
 import { RedisModule } from './redis/redis.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { RealtimeModule } from './realtime/realtime.module';
+import { NavbarModule } from './navbar/navbar.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { RealtimeModule } from './realtime/realtime.module';
     SiteSettingsModule,
     ReviewsModule,
     RedisModule,
+    NavbarModule,
   ],
   controllers: [AppController],
   providers: [AppService],
