@@ -74,13 +74,22 @@ export class AllExceptionsFilter implements ExceptionFilter {
       );
     }
 
-    // Send error response to client if not already sent
+    // Send standardized error response to client if not already sent
     if (!response.headersSent) {
+      const formattedMessage = Array.isArray(message)
+        ? message.join(', ')
+        : typeof message === 'object' && message !== null
+        ? (message.message || JSON.stringify(message))
+        : String(message);
+
       response.status(status).json({
+        success: false,
+        message: formattedMessage,
+        data: null,
+        meta: null,
         statusCode: status,
         timestamp: new Date().toISOString(),
         path: request.url,
-        message,
         error: errorName,
       });
     }
