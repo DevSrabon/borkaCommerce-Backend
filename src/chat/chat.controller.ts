@@ -94,11 +94,17 @@ export class ChatController {
       /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(file.originalname);
 
     const host = req?.get ? (req.get('x-forwarded-host') || req.get('host')) : undefined;
-    const proto = req?.get ? (req.get('x-forwarded-proto') || req.protocol || 'https') : 'https';
-    const baseUrl = process.env.UPLOAD_PUBLIC_BASE_URL || (host ? `${proto}://${host}` : 'http://localhost:8080');
+    const baseUrl =
+      process.env.UPLOAD_PUBLIC_BASE_URL ||
+      process.env.BACKEND_URL ||
+      (host && !host.includes('localhost') ? `${proto}://${host}` : undefined);
+
+    const attachmentUrl = baseUrl
+      ? `${baseUrl.replace(/\/+$/, '')}/uploads${relativePath}`
+      : `/uploads${relativePath}`;
 
     return {
-      attachment_url: `${baseUrl.replace(/\/+$/, '')}/uploads${relativePath}`,
+      attachment_url: attachmentUrl,
       attachment_type: isImage ? 'image' : 'file',
       attachment_name: file.originalname,
       size: file.size,
