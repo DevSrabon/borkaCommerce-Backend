@@ -94,6 +94,7 @@ export class ChatController {
       /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(file.originalname);
 
     const host = req?.get ? (req.get('x-forwarded-host') || req.get('host')) : undefined;
+    const proto = req?.get ? (req.get('x-forwarded-proto') || req.protocol || 'https') : 'https';
     const baseUrl =
       process.env.UPLOAD_PUBLIC_BASE_URL ||
       process.env.BACKEND_URL ||
