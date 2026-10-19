@@ -470,6 +470,17 @@ export class SiteSettingsService implements OnModuleInit {
     publicSettings['stripe_publishable_key'] =
       all.STRIPE_PUBLISHABLE_KEY || process.env.STRIPE_PUBLISHABLE_KEY || '';
 
+    // Auto-resolve relative upload paths (e.g. /uploads/product/...) to absolute public URLs
+    const baseUrl = process.env.UPLOAD_PUBLIC_BASE_URL || process.env.BACKEND_URL;
+    if (baseUrl) {
+      const cleanBase = baseUrl.replace(/\/+$/, '');
+      for (const imageKey of ['logo_url', 'favicon_url', 'footer_logo_url', 'size_chart_file', 'og_image_url']) {
+        if (publicSettings[imageKey] && publicSettings[imageKey].startsWith('/uploads/')) {
+          publicSettings[imageKey] = `${cleanBase}${publicSettings[imageKey]}`;
+        }
+      }
+    }
+
     return publicSettings;
   }
 
