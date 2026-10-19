@@ -23,12 +23,10 @@ async function bootstrap() {
 
   // Serve static uploaded files (covers all sub-folders automatically)
   app.use('/uploads', express.static(uploadsPath));
-  app.use('/api/v1/uploads', express.static(uploadsPath));
 
   // Increase payload size limit to prevent "request entity too large" errors (50MB)
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
-
 
   // Enable global DTO validation
   app.useGlobalPipes(
@@ -38,25 +36,6 @@ async function bootstrap() {
       forbidNonWhitelisted: true,
     }),
   );
-
-  // Transparent rewrite: allow both /api/v1/... and direct /... requests seamlessly
-  app.use((req: any, res: any, next: any) => {
-    const url = req.url || '';
-    if (
-      !url.startsWith('/api/v1') &&
-      !url.startsWith('/uploads') &&
-      !url.startsWith('/api/docs') &&
-      !url.startsWith('/socket.io')
-    ) {
-      req.url = `/api/v1${url.startsWith('/') ? '' : '/'}${url}`;
-    }
-    next();
-  });
-
-  // Set global prefix to /api/v1
-  app.setGlobalPrefix('api/v1', {
-    exclude: ['api/docs'],
-  });
 
   // Global uniform response interceptor: { success, message, data, meta }
   app.useGlobalInterceptors(new TransformInterceptor());

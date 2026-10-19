@@ -9,7 +9,6 @@ export class AppService {
       version: '1.0.0',
       status: 'operational',
       message: 'Welcome to Saba Al Wadi E-Commerce API Service',
-      documentation: '/api/docs',
       health: '/health',
       timestamp: new Date().toISOString(),
     };
