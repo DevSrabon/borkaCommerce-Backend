@@ -18,6 +18,16 @@ export interface NavbarItemRecord {
   updated_at?: Date;
 }
 
+export interface NavbarCategoryNode {
+  id: string;
+  name: string;
+  slug: string;
+  link: string;
+  image?: string;
+  description?: string;
+  children: NavbarCategoryNode[];
+}
+
 export interface NavbarCategoryGroup {
   id: string;
   name: string;
@@ -25,14 +35,7 @@ export interface NavbarCategoryGroup {
   link: string;
   image?: string;
   description?: string;
-  subcategories: {
-    id: string;
-    name: string;
-    slug: string;
-    link: string;
-    image?: string;
-    description?: string;
-  }[];
+  subcategories: NavbarCategoryNode[];
 }
 
 export interface PopulatedNavbarTab {
@@ -79,12 +82,84 @@ export class NavbarService {
       return [];
     }
 
-    // Pre-fetch all categories with children for efficient lookups
-    const allCategories = await this.prisma.categories.findMany({
-      include: { children: true },
+    // Pre-fetch active categories and published product counts
+    const allActiveCategories = await this.prisma.categories.findMany({
+      where: { is_active: true },
       orderBy: { sort_order: 'asc' },
     });
-    const categoryMap = new Map(allCategories.map((c) => [c.id, c]));
+
+    const counts = await this.prisma.product_categories.groupBy({
+      by: ['category_id'],
+      where: {
+        product: {
+          status: 'PUBLISHED',
+          deleted_at: null,
+        },
+      },
+      _count: {
+        product_id: true,
+      },
+    });
+
+    const countMap = new Map<string, number>();
+    counts.forEach((c) => {
+      countMap.set(c.category_id, c._count.product_id);
+    });
+
+    // Build active category tree and prune any with 0 products
+    const categoryMap = new Map<string, any>();
+    allActiveCategories.forEach((cat) => {
+      const directCount = countMap.get(cat.id) || 0;
+      categoryMap.set(cat.id, {
+        ...cat,
+        direct_product_count: directCount,
+        product_count: directCount,
+        children: [],
+      });
+    });
+
+    const rawTree: any[] = [];
+    allActiveCategories.forEach((cat) => {
+      const mapped = categoryMap.get(cat.id);
+      if (cat.parent_id) {
+        const parent = categoryMap.get(cat.parent_id);
+        if (parent) {
+          parent.children.push(mapped);
+        } else {
+          rawTree.push(mapped);
+        }
+      } else {
+        rawTree.push(mapped);
+      }
+    });
+
+    const buildTree = (nodes: any[]): any[] => {
+      const result: any[] = [];
+      for (const node of nodes) {
+        const validChildren = buildTree(node.children || []);
+        const childrenCount = validChildren.reduce((sum, ch) => sum + (ch.product_count || 0), 0);
+        const totalCount = (node.direct_product_count || 0) + childrenCount;
+
+        result.push({
+          ...node,
+          product_count: totalCount,
+          children: validChildren,
+        });
+      }
+      return result;
+    };
+
+    const validTree = buildTree(rawTree);
+    const validCategoryMap = new Map<string, any>();
+    const registerValid = (nodes: any[]) => {
+      for (const n of nodes) {
+        validCategoryMap.set(n.id, n);
+        if (n.children && n.children.length > 0) {
+          registerValid(n.children);
+        }
+      }
+    };
+    registerValid(validTree);
 
     // Pre-fetch sample products for product/subcategory lookups
     const sampleProducts = await this.prisma.products.findMany({
@@ -124,108 +199,120 @@ export class NavbarService {
           resolvedDesc =
             item.description || 'Explore our complete Emirati couture and daily abaya collection';
 
-          const rootCats = allCategories.filter((c) => !c.parent_id);
-
-          // Build organized hierarchical groups: Parent Category + its distinct Subcategories
-          categoryGroups = rootCats.map((root) => ({
+          categoryGroups = validTree.map((root) => ({
             id: root.id,
             name: root.name,
             slug: root.slug,
             link: `/catalog?category=${root.slug}`,
             image: root.image ?? undefined,
             description: root.description ?? undefined,
-            subcategories: (root.children || []).map((sub) => ({
+            subcategories: (root.children || []).map((sub: any) => ({
               id: sub.id,
               name: sub.name,
               slug: sub.slug,
               link: `/catalog?category=${sub.slug}`,
               image: sub.image ?? undefined,
               description: sub.description ?? undefined,
+              children: [],
             })),
           }));
 
-          // Also populate flat items with parent tag in subtitle for fallback
           const allSubs: any[] = [];
-          rootCats.forEach((root) => {
-            if (root.children && root.children.length > 0) {
-              root.children.forEach((sub) => {
-                allSubs.push({
-                  ...sub,
-                  parentName: root.name,
-                });
-              });
-            } else {
-              allSubs.push({
-                ...root,
-                parentName: 'Collection',
-              });
-            }
+          categoryGroups.forEach((group) => {
+            (group.subcategories || []).forEach((sub) => {
+              allSubs.push({ ...sub, parentName: group.name });
+            });
           });
-          const sourceList = allSubs.length > 0 ? allSubs : rootCats;
+
+          const sourceList = allSubs.length > 0 ? allSubs : validTree;
           dropdownItems = sourceList.map((cat: any) => ({
             id: cat.id,
             name: cat.name,
             link: `/catalog?category=${cat.slug}`,
-            image: cat.image || (rootCats[0]?.image ?? undefined),
+            image: cat.image || (validTree[0]?.image ?? undefined),
             subtitle: cat.parentName ? `Under ${cat.parentName}` : (cat.description || 'Explore collection'),
           }));
           break;
         }
 
         case 'CATEGORY': {
-          const cat = item.category_id ? categoryMap.get(item.category_id) : null;
-          if (cat) {
-            resolvedSlug = cat.slug;
-            resolvedLink = item.link || `/catalog?category=${cat.slug}`;
-            resolvedDesc = item.description || cat.description || `Explore ${cat.name} collection`;
+          const cat = item.category_id ? validCategoryMap.get(item.category_id) : null;
+          if (!cat) {
+            // Category is inactive or has 0 products: do NOT render this category tab on storefront!
+            continue;
+          }
 
-            if (cat.children && cat.children.length > 0) {
-              // Subcategories under this category
-              dropdownItems = cat.children.map((sub) => ({
-                id: sub.id,
-                name: sub.name,
-                link: `/catalog?category=${sub.slug}`,
-                image: sub.image || cat.image || undefined,
-                subtitle: sub.description || 'Explore Collection',
-              }));
-            } else {
-              // Direct products under this category
-              const catProds = sampleProducts.filter((p) =>
-                p.product_categories?.some((pc) => pc.category_id === cat.id)
-              );
-              const displayProds = catProds.length > 0 ? catProds : sampleProducts.slice(0, 8);
-              dropdownItems = displayProds.map((prod) => ({
-                id: prod.id,
-                name: prod.name,
-                link: `/product/${prod.slug}`,
-                image: (prod.images && prod.images[0]?.image_url) || cat.image || undefined,
-                subtitle: `AED ${prod.variants?.[0]?.price || '350'}`,
-              }));
-            }
+          resolvedSlug = cat.slug;
+          resolvedLink = item.link || `/catalog?category=${cat.slug}`;
+          resolvedDesc = item.description || cat.description || `Explore ${cat.name} collection`;
+
+          const validChildren = cat.children || [];
+          if (validChildren.length > 0) {
+            categoryGroups = [
+              {
+                id: cat.id,
+                name: cat.name,
+                slug: cat.slug,
+                link: `/catalog?category=${cat.slug}`,
+                image: cat.image ?? undefined,
+                description: cat.description ?? undefined,
+                subcategories: validChildren.map((sub: any) => ({
+                  id: sub.id,
+                  name: sub.name,
+                  slug: sub.slug,
+                  link: `/catalog?category=${sub.slug}`,
+                  image: sub.image ?? undefined,
+                  description: sub.description ?? undefined,
+                  children: [],
+                })),
+              },
+            ];
+            dropdownItems = validChildren.map((sub: any) => ({
+              id: sub.id,
+              name: sub.name,
+              link: `/catalog?category=${sub.slug}`,
+              image: sub.image || (cat.image ?? undefined),
+              subtitle: sub.description || 'Explore Collection',
+            }));
+          } else {
+            const catProds = sampleProducts.filter((p) =>
+              p.product_categories?.some((pc) => pc.category_id === cat.id)
+            );
+            const displayProds = catProds.length > 0 ? catProds : sampleProducts.slice(0, 8);
+            dropdownItems = displayProds.map((prod) => ({
+              id: prod.id,
+              name: prod.name,
+              link: `/product/${prod.slug}`,
+              image: (prod.images && prod.images[0]?.image_url) || cat.image || undefined,
+              subtitle: `AED ${prod.variants?.[0]?.price || '350'}`,
+            }));
           }
           break;
         }
 
         case 'SUBCATEGORY': {
           const targetId = item.subcategory_id || item.category_id;
-          const sub = targetId ? categoryMap.get(targetId) : null;
-          if (sub) {
-            resolvedSlug = sub.slug;
-            resolvedLink = item.link || `/catalog?category=${sub.slug}`;
-            resolvedDesc = item.description || sub.description || `Explore ${sub.name} collection`;
-
-            const subProds = sampleProducts.filter((p) =>
-              p.product_categories?.some((pc) => pc.category_id === sub.id)
-            );
-            const displayProds = subProds.length > 0 ? subProds : sampleProducts.slice(0, 8);
-            dropdownItems = displayProds.map((prod) => ({
-              id: prod.id,
-              name: prod.name,
-              link: `/product/${prod.slug}`,
-              image: (prod.images && prod.images[0]?.image_url) || sub.image || undefined,
-              subtitle: `AED ${prod.variants?.[0]?.price || '350'}`,
-            }));
+          const sub = targetId ? validCategoryMap.get(targetId) : null;
+          if (!sub) {
+            // Subcategory is inactive or has 0 products: skip tab on storefront!
+            continue;
           }
+
+          resolvedSlug = sub.slug;
+          resolvedLink = item.link || `/catalog?category=${sub.slug}`;
+          resolvedDesc = item.description || sub.description || `Explore ${sub.name} collection`;
+
+          const subProds = sampleProducts.filter((p) =>
+            p.product_categories?.some((pc) => pc.category_id === sub.id)
+          );
+          const displayProds = subProds.length > 0 ? subProds : sampleProducts.slice(0, 8);
+          dropdownItems = displayProds.map((prod) => ({
+            id: prod.id,
+            name: prod.name,
+            link: `/product/${prod.slug}`,
+            image: (prod.images && prod.images[0]?.image_url) || sub.image || undefined,
+            subtitle: `AED ${prod.variants?.[0]?.price || '350'}`,
+          }));
           break;
         }
 

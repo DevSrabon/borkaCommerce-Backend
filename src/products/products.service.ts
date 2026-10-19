@@ -854,6 +854,32 @@ export class ProductsService {
 
   // --- STOREFRONT METHODS ---
 
+  private async getAllDescendantCategoryIds(categoryIdOrSlug: string): Promise<string[]> {
+    const target = await this.prisma.categories.findFirst({
+      where: {
+        OR: [{ id: categoryIdOrSlug }, { slug: categoryIdOrSlug }],
+      },
+      select: { id: true },
+    });
+    if (!target) return [categoryIdOrSlug];
+
+    const allCategories = await this.prisma.categories.findMany({
+      select: { id: true, parent_id: true },
+    });
+
+    const descendantIds: string[] = [target.id];
+    const findChildrenRecursively = (parentId: string) => {
+      const children = allCategories.filter((c) => c.parent_id === parentId);
+      for (const child of children) {
+        descendantIds.push(child.id);
+        findChildrenRecursively(child.id);
+      }
+    };
+    findChildrenRecursively(target.id);
+
+    return descendantIds;
+  }
+
   async findAllStorefront(
     categoryId?: string,
     isFeatured?: boolean,
@@ -872,8 +898,9 @@ export class ProductsService {
     }
 
     if (categoryId) {
+      const targetCategoryIds = await this.getAllDescendantCategoryIds(categoryId);
       whereClause.product_categories = {
-        some: { category_id: categoryId },
+        some: { category_id: { in: targetCategoryIds } },
       };
     }
 
@@ -950,6 +977,11 @@ export class ProductsService {
     ]);
 
     // Map each product to append dynamic pricing based on active offers
+    const allDbCategories = await this.prisma.categories.findMany({
+      select: { id: true, name: true, slug: true, parent_id: true },
+    });
+    const categoryLookup = new Map(allDbCategories.map((c) => [c.id, c]));
+
     const mappedProducts = products.map((prod) => {
       const productCategoryIds = prod.product_categories.map((pc) => pc.category_id);
       const activeCatOffersForProduct = activeCategoryOffers.filter((offer) =>
@@ -1057,12 +1089,14 @@ export class ProductsService {
         images: prod.images.map((img) => img.image_url),
         image_objects: prod.images.map((img) => ({ image_url: img.image_url, alt_text: (img as any).alt_text })),
         categories: prod.product_categories.flatMap((pc) => {
-          const list: { id: string; name: string; slug: string }[] = [
-            { id: pc.category.id, name: pc.category.name, slug: pc.category.slug },
-          ];
-          if ((pc.category as any)?.parent) {
-            const p = (pc.category as any).parent;
-            list.push({ id: p.id, name: p.name, slug: p.slug });
+          const list: { id: string; name: string; slug: string }[] = [];
+          let curr = categoryLookup.get(pc.category_id);
+          while (curr) {
+            list.push({ id: curr.id, name: curr.name, slug: curr.slug });
+            curr = curr.parent_id ? categoryLookup.get(curr.parent_id) : undefined;
+          }
+          if (list.length === 0 && pc.category) {
+            list.push({ id: pc.category.id, name: pc.category.name, slug: pc.category.slug });
           }
           return list;
         }),

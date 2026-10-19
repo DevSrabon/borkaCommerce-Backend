@@ -56,6 +56,12 @@ export class CategoriesController {
     return this.categoriesService.remove(id);
   }
 
+  @UseGuards(AdminGuard)
+  @Post('admin/categories/reorder')
+  reorder(@Body() body: { items: { id: string; sort_order: number }[] }) {
+    return this.categoriesService.reorder(body.items);
+  }
+
   // --- STOREFRONT (ECOMMERCE) ROUTES ---
 
   @Get('ecommerce/categories')
@@ -64,21 +70,8 @@ export class CategoriesController {
   }
 
   @Get('ecommerce/categories/tree')
-  async getTreeStorefront() {
-    // Return only active categories for storefront
-    const tree = await this.categoriesService.getTree();
-    
-    // Helper function to filter out inactive categories recursively
-    const filterActive = (nodes: any[]): any[] => {
-      return nodes
-        .filter((node) => node.is_active)
-        .map((node) => ({
-          ...node,
-          children: filterActive(node.children || []),
-        }));
-    };
-
-    return filterActive(tree);
+  getTreeStorefront() {
+    return this.categoriesService.getStorefrontTree();
   }
 
   @Get('ecommerce/categories/:id')
