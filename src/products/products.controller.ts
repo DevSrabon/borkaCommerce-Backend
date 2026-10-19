@@ -24,18 +24,14 @@ export class ProductsController {
   @UseInterceptors(
     FileInterceptor('image', { storage: imageUploadMiddleware('product') }),
   )
-  uploadProductImage(@UploadedFile() file: any, @Req() req: any) {
+  async uploadProductImage(@UploadedFile() file: any, @Req() req: any) {
     if (!file) {
       throw new BadRequestException('No file uploaded');
     }
     const host = req?.get ? (req.get('x-forwarded-host') || req.get('host')) : undefined;
     const proto = req?.get ? (req.get('x-forwarded-proto') || req.protocol || 'https') : 'https';
     const dynamicBase = host ? `${proto}://${host}` : undefined;
-    const imagePath = this.uploadFilesService.relativePath('product', file.filename);
-    return {
-      imageUrl: this.uploadFilesService.imageUrl(imagePath, dynamicBase),
-      imagePath,
-    };
+    return await this.uploadFilesService.processUploadedFile('product', file.filename, file.path, dynamicBase);
   }
 
   @UseGuards(AdminGuard)
@@ -60,7 +56,7 @@ export class ProductsController {
       }),
     }),
   )
-  uploadAdminImage(@Param('folder') folder: string, @UploadedFile() file: any, @Req() req: any) {
+  async uploadAdminImage(@Param('folder') folder: string, @UploadedFile() file: any, @Req() req: any) {
     if (!this.uploadFilesService.isSupportedFolder(folder)) {
       throw new BadRequestException('Unsupported upload folder');
     }
@@ -70,11 +66,7 @@ export class ProductsController {
     const host = req?.get ? (req.get('x-forwarded-host') || req.get('host')) : undefined;
     const proto = req?.get ? (req.get('x-forwarded-proto') || req.protocol || 'https') : 'https';
     const dynamicBase = host ? `${proto}://${host}` : undefined;
-    const imagePath = this.uploadFilesService.relativePath(folder, file.filename);
-    return {
-      imageUrl: this.uploadFilesService.imageUrl(imagePath, dynamicBase),
-      imagePath,
-    };
+    return await this.uploadFilesService.processUploadedFile(folder, file.filename, file.path, dynamicBase);
   }
 
   @UseGuards(AdminGuard)

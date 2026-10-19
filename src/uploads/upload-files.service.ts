@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { basename, join, normalize, relative, extname } from 'path';
 import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
+import sharp from 'sharp';
 import { v2 as cloudinary } from 'cloudinary';
 import { S3Client, PutObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { UploadFolder, uploadFolders } from './image-upload.middleware';
@@ -67,9 +68,122 @@ export class UploadFilesService {
   }
 
   /**
+   * Compress and optimize an image file based on dynamic site settings.
+   */
+  async compressImage(folder: string, filename: string, localFilePath: string) {
+    try {
+      const enabled =
+        (await this.siteSettingsService.getSetting('IMAGE_COMPRESSION_ENABLED', 'true')) === 'true';
+      if (!enabled) {
+        return { filename, localFilePath, compressed: false };
+      }
+
+      const ext = extname(filename).toLowerCase();
+      const compressibleExts = ['.jpg', '.jpeg', '.png', '.webp', '.avif', '.tiff'];
+      if (!compressibleExts.includes(ext)) {
+        return { filename, localFilePath, compressed: false };
+      }
+
+      const qualitySetting = await this.siteSettingsService.getSetting(
+        'IMAGE_COMPRESSION_QUALITY',
+        '80',
+      );
+      const quality = Math.max(10, Math.min(100, parseInt(qualitySetting, 10) || 80));
+
+      const maxWidthSetting = await this.siteSettingsService.getSetting('IMAGE_MAX_WIDTH', '1920');
+      const maxWidth = parseInt(maxWidthSetting, 10) || 1920;
+
+      const convertToWebp =
+        (await this.siteSettingsService.getSetting('IMAGE_CONVERT_WEBP', 'true')) === 'true';
+
+      const statBefore = await fs.stat(localFilePath);
+      const originalSize = statBefore.size;
+
+      let pipeline = sharp(localFilePath).rotate();
+      const metadata = await pipeline.metadata();
+
+      if (
+        maxWidth > 0 &&
+        metadata.width &&
+        (metadata.width > maxWidth || (metadata.height && metadata.height > maxWidth))
+      ) {
+        pipeline = pipeline.resize({
+          width: maxWidth,
+          height: maxWidth,
+          fit: 'inside',
+          withoutEnlargement: true,
+        });
+      }
+
+      let newFilename = filename;
+      let targetPath = localFilePath;
+
+      if (convertToWebp) {
+        const dotIdx = filename.lastIndexOf('.');
+        const nameWithoutExt = dotIdx > 0 ? filename.substring(0, dotIdx) : filename;
+        newFilename = `${nameWithoutExt}.webp`;
+        targetPath = join(this.uploadsRoot, folder, newFilename);
+
+        const tempOut = `${targetPath}.tmp`;
+        await pipeline.webp({ quality, effort: 4 }).toFile(tempOut);
+
+        if (targetPath !== localFilePath) {
+          try {
+            await fs.unlink(localFilePath);
+          } catch (_) {}
+        }
+        await fs.rename(tempOut, targetPath);
+      } else {
+        const tempOut = `${localFilePath}.tmp`;
+        if (ext === '.jpg' || ext === '.jpeg') {
+          await pipeline.jpeg({ quality, mozjpeg: true }).toFile(tempOut);
+        } else if (ext === '.png') {
+          await pipeline.png({ quality, compressionLevel: 8 }).toFile(tempOut);
+        } else if (ext === '.webp') {
+          await pipeline.webp({ quality }).toFile(tempOut);
+        } else {
+          await pipeline.toFile(tempOut);
+        }
+        await fs.unlink(localFilePath);
+        await fs.rename(tempOut, localFilePath);
+      }
+
+      const statAfter = await fs.stat(targetPath);
+      const compressedSize = statAfter.size;
+      const savings = Math.max(
+        0,
+        Math.round(((originalSize - compressedSize) / originalSize) * 100),
+      );
+
+      this.logger.log(
+        `Optimized image: ${filename} -> ${newFilename} (${Math.round(
+          originalSize / 1024,
+        )}KB -> ${Math.round(compressedSize / 1024)}KB, saved ${savings}%)`,
+      );
+
+      return {
+        filename: newFilename,
+        localFilePath: targetPath,
+        compressed: true,
+        originalSize,
+        compressedSize,
+        savings,
+      };
+    } catch (err: any) {
+      this.logger.error(`Image compression failed for ${filename}: ${err.message}. Using original.`);
+      return { filename, localFilePath, compressed: false };
+    }
+  }
+
+  /**
    * Process a saved file: uploads to Cloudflare R2, AWS S3, Cloudinary, or retains in local storage.
    */
   async processUploadedFile(folder: string, filename: string, localFilePath: string, fallbackBase?: string) {
+    // 0. Automatically compress and optimize image based on dynamic site settings
+    const compRes = await this.compressImage(folder, filename, localFilePath);
+    filename = compRes.filename;
+    localFilePath = compRes.localFilePath;
+
     const driver =
       (await this.siteSettingsService.getSetting('STORAGE_DRIVER')) ||
       (await this.siteSettingsService.getSetting('asset_storage_driver', 'local'));
@@ -122,6 +236,10 @@ export class UploadFilesService {
             imageUrl: finalUrl,
             imagePath: finalUrl,
             storage: 'r2',
+            compressed: compRes.compressed,
+            originalSize: compRes.originalSize,
+            compressedSize: compRes.compressedSize,
+            savings: compRes.savings,
           };
         } catch (err: any) {
           this.logger.error(`Cloudflare R2 upload failed: ${err.message}. Falling back to local.`);
@@ -176,6 +294,10 @@ export class UploadFilesService {
             imageUrl: finalUrl,
             imagePath: finalUrl,
             storage: 's3',
+            compressed: compRes.compressed,
+            originalSize: compRes.originalSize,
+            compressedSize: compRes.compressedSize,
+            savings: compRes.savings,
           };
         } catch (err: any) {
           this.logger.error(`AWS S3 upload failed: ${err.message}. Falling back to local.`);
@@ -222,6 +344,10 @@ export class UploadFilesService {
             imageUrl: uploadResult.secure_url,
             imagePath: uploadResult.secure_url,
             storage: 'cloudinary',
+            compressed: compRes.compressed,
+            originalSize: compRes.originalSize,
+            compressedSize: compRes.compressedSize,
+            savings: compRes.savings,
           };
         } catch (err: any) {
           this.logger.error(`Cloudinary upload failed: ${err.message}. Falling back to local storage.`);
@@ -235,6 +361,10 @@ export class UploadFilesService {
       imageUrl: this.imageUrl(relPath, fallbackBase),
       imagePath: relPath,
       storage: 'local',
+      compressed: compRes.compressed,
+      originalSize: compRes.originalSize,
+      compressedSize: compRes.compressedSize,
+      savings: compRes.savings,
     };
   }
 
