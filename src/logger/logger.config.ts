@@ -45,23 +45,22 @@ const dailyErrorRotateTransport: any = new DailyRotateTransport({
   level: 'error',
 });
 
-// Transports: Save exclusively to Winston daily rotating files in /logs (NOT in terminal)
+// Transports: Save exclusively to Winston daily rotating files in /logs (terminal/PM2 console remains clean)
 const transports: winston.transport[] = [
   dailyCombinedRotateTransport,
   dailyErrorRotateTransport,
   dailyHttpRotateTransport,
 ];
 
-// Optional: Console transport will ONLY be added if explicitly enabled with ENABLE_CONSOLE_LOGS=true
+// Console transport is strictly limited to critical errors only when explicitly enabled
 if (process.env.ENABLE_CONSOLE_LOGS === 'true') {
   transports.push(
     new winston.transports.Console({
-      level: process.env.CONSOLE_LOG_LEVEL || 'info',
+      level: 'error',
       format: winston.format.combine(
         winston.format.colorize(),
-        winston.format.printf(({ timestamp, level, message, ...meta }) => {
-          const metaStr = Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : '';
-          return `[${timestamp}] [${level}]: ${message}${metaStr}`;
+        winston.format.printf(({ timestamp, level, message }) => {
+          return `[${timestamp}] [${level}]: ${message}`;
         }),
       ),
     }),
