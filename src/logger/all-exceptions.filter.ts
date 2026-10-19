@@ -76,11 +76,20 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     // Send standardized error response to client if not already sent
     if (!response.headersSent) {
-      const formattedMessage = Array.isArray(message)
+      let formattedMessage = Array.isArray(message)
         ? message.join(', ')
         : typeof message === 'object' && message !== null
         ? (message.message || JSON.stringify(message))
         : String(message);
+
+      // Return user-friendly route not found message when endpoint is unmapped
+      if (
+        status === HttpStatus.NOT_FOUND &&
+        (/^Cannot (GET|POST|PATCH|DELETE|PUT|OPTIONS|HEAD) /i.test(formattedMessage) ||
+          formattedMessage === 'Not Found')
+      ) {
+        formattedMessage = 'Can not find the route';
+      }
 
       response.status(status).json({
         success: false,
