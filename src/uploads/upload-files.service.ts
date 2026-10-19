@@ -2,12 +2,30 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { basename, join, normalize, relative, extname } from 'path';
 import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
-import sharp from 'sharp';
 import { v2 as cloudinary } from 'cloudinary';
 import { S3Client, PutObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { UploadFolder, uploadFolders } from './image-upload.middleware';
 import { PrismaService } from '../database/prisma.service';
 import { SiteSettingsService } from '../site-settings/site-settings.service';
+
+let cachedSharp: any = null;
+let sharpLoadAttempted = false;
+
+async function getSharp() {
+  if (cachedSharp) return cachedSharp;
+  if (sharpLoadAttempted) return null;
+  sharpLoadAttempted = true;
+  try {
+    const mod = await import('sharp');
+    cachedSharp = (mod as any).default || mod;
+    return cachedSharp;
+  } catch (err: any) {
+    Logger.warn(
+      `[UploadFilesService] Native 'sharp' module could not be loaded (${err?.message || err}). Running in uncompressed upload mode.`,
+    );
+    return null;
+  }
+}
 
 @Injectable()
 export class UploadFilesService {
@@ -99,7 +117,12 @@ export class UploadFilesService {
       const statBefore = await fs.stat(localFilePath);
       const originalSize = statBefore.size;
 
-      let pipeline = sharp(localFilePath).rotate();
+      const sharpInstance = await getSharp();
+      if (!sharpInstance) {
+        return { filename, localFilePath, compressed: false };
+      }
+
+      let pipeline = sharpInstance(localFilePath).rotate();
       const metadata = await pipeline.metadata();
 
       if (
