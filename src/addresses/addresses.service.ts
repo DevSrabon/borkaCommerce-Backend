@@ -16,7 +16,8 @@ export class AddressesService {
     if (!dto.city || !dto.city.trim()) {
       throw new BadRequestException('City is required');
     }
-    if (!dto.full_address || !dto.full_address.trim()) {
+    const resolvedAddress = (dto.full_address || dto.street || '').trim();
+    if (!resolvedAddress) {
       throw new BadRequestException('Full delivery address is required');
     }
 
@@ -50,7 +51,7 @@ export class AddressesService {
           phone: dto.phone.trim(),
           city: dto.city.trim(),
           postal_code: dto.postal_code?.trim() || null,
-          full_address: dto.full_address.trim(),
+          full_address: resolvedAddress,
           is_default: isDefault,
         },
       });
@@ -84,6 +85,8 @@ export class AddressesService {
 
       const resolvedAddress = dto.full_address !== undefined
         ? dto.full_address.trim()
+        : dto.street !== undefined
+        ? dto.street.trim()
         : existing.full_address;
 
       return tx.customer_addresses.update({

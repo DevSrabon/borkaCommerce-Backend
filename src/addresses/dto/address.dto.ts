@@ -18,8 +18,12 @@ export class CreateAddressDto {
   postal_code?: string;
 
   @IsString()
-  @IsNotEmpty()
-  full_address: string;
+  @IsOptional()
+  full_address?: string;
+
+  @IsString()
+  @IsOptional()
+  street?: string;
 
   @IsBoolean()
   @IsOptional()
@@ -46,6 +50,10 @@ export class UpdateAddressDto {
   @IsString()
   @IsOptional()
   full_address?: string;
+
+  @IsString()
+  @IsOptional()
+  street?: string;
 
   @IsBoolean()
   @IsOptional()

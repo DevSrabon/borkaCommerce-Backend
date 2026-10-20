@@ -1983,8 +1983,13 @@ export class OrdersService implements OnModuleInit {
     if (dto.phone !== undefined) dataToUpdate.shipping_phone = dto.phone?.trim() || null;
     if (dto.city !== undefined) dataToUpdate.shipping_city = dto.city?.trim() || null;
     if (dto.postal_code !== undefined) dataToUpdate.shipping_postal_code = dto.postal_code?.trim() || null;
-    if (dto.full_address !== undefined) {
-      dataToUpdate.shipping_full_address = dto.full_address?.trim() || null;
+    const resolvedFullAddress = dto.full_address !== undefined
+      ? dto.full_address?.trim() || null
+      : dto.street !== undefined
+      ? dto.street?.trim() || null
+      : undefined;
+    if (resolvedFullAddress !== undefined) {
+      dataToUpdate.shipping_full_address = resolvedFullAddress;
     }
 
     await this.prisma.orders.update({
@@ -2028,8 +2033,13 @@ export class OrdersService implements OnModuleInit {
     if (dto.phone !== undefined) dataToUpdate.shipping_phone = dto.phone?.trim() || null;
     if (dto.city !== undefined) dataToUpdate.shipping_city = dto.city?.trim() || null;
     if (dto.postal_code !== undefined) dataToUpdate.shipping_postal_code = dto.postal_code?.trim() || null;
-    if (dto.full_address !== undefined) {
-      dataToUpdate.shipping_full_address = dto.full_address?.trim() || null;
+    const resolvedFullAddress = dto.full_address !== undefined
+      ? dto.full_address?.trim() || null
+      : dto.street !== undefined
+      ? dto.street?.trim() || null
+      : undefined;
+    if (resolvedFullAddress !== undefined) {
+      dataToUpdate.shipping_full_address = resolvedFullAddress;
     }
 
     await this.prisma.orders.update({

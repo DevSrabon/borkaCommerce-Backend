@@ -187,4 +187,8 @@ export class UpdateOrderAddressDto {
   @IsOptional()
   @IsString()
   full_address?: string;
+
+  @IsOptional()
+  @IsString()
+  street?: string;
 }
