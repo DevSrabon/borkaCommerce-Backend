@@ -58,17 +58,17 @@ describe('eCommerce Core API & E2E Tests', () => {
   });
 
   describe('Security & Address API Protection', () => {
-    it('POST /ecommerce/addresses without auth token -> rejects with 401 Unauthorized', async () => {
+    it('POST /ecommerce/customer-addresses without auth token -> rejects with 401 Unauthorized', async () => {
       const res = await request(app.getHttpServer())
-        .get('/ecommerce/addresses')
+        .get('/ecommerce/customer-addresses')
         .expect(401);
 
       expect(res.body.message).toContain('Session token is missing');
     });
 
-    it('GET /ecommerce/addresses/:id without auth token -> rejects with 401 Unauthorized', async () => {
+    it('GET /ecommerce/customer-addresses/:id without auth token -> rejects with 401 Unauthorized', async () => {
       const res = await request(app.getHttpServer())
-        .get('/ecommerce/addresses/23cc60a2-0efe-4874-85aa-2eb63fe1d0c6')
+        .get('/ecommerce/customer-addresses/23cc60a2-0efe-4874-85aa-2eb63fe1d0c6')
         .expect(401);
 
       expect(res.body.message).toContain('Session token is missing');

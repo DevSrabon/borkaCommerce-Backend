@@ -5,7 +5,7 @@ import { AddressesService } from './addresses.service';
 import { CreateAddressDto, UpdateAddressDto } from './dto/address.dto';
 
 @UseGuards(AuthGuard)
-@Controller('ecommerce/addresses')
+@Controller(['ecommerce/customer-addresses', 'ecommerce/addresses'])
 export class AddressesController {
   constructor(private readonly addressesService: AddressesService) {}
 

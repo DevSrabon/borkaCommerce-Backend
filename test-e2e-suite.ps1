@@ -192,7 +192,7 @@ try {
         is_default = $true
     } | ConvertTo-Json
 
-    $addressRes = Invoke-RestMethod -Uri "$baseUrl/ecommerce/addresses" -Method Post -Headers $aishaHeaders -ContentType "application/json" -Body $addressBody
+    $addressRes = Invoke-RestMethod -Uri "$baseUrl/ecommerce/customer-addresses" -Method Post -Headers $aishaHeaders -ContentType "application/json" -Body $addressBody
     $addressId = $addressRes.id
 
     # Get a variant ID to order from prod2
