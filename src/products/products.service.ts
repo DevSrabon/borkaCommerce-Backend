@@ -1120,7 +1120,7 @@ export class ProductsService {
   }
 
   async findOneStorefront(slug: string) {
-    const product = await this.prisma.products.findFirst({
+    let product = await this.prisma.products.findFirst({
       where: { slug, status: product_status.PUBLISHED, deleted_at: null },
       include: {
         product_categories: {
@@ -1150,7 +1150,7 @@ export class ProductsService {
           },
         },
         reviews: {
-          where: { status: 'APPROVED' },
+          where: { status: review_status.APPROVED },
           include: {
             customer: {
               select: { first_name: true, last_name: true },
@@ -1160,6 +1160,60 @@ export class ProductsService {
         },
       },
     });
+
+    if (!product) {
+      // Fallback: check if slug is a variant SKU or variant ID
+      const variant = await this.prisma.product_variants.findFirst({
+        where: {
+          OR: [{ sku: slug }, { id: slug }],
+          status: variant_status.ACTIVE,
+        },
+        select: { product_id: true },
+      });
+
+      if (variant) {
+        product = await this.prisma.products.findFirst({
+          where: { id: variant.product_id, status: product_status.PUBLISHED, deleted_at: null },
+          include: {
+            product_categories: {
+              include: { category: true },
+            },
+            related_categories: {
+              include: { category: true },
+            },
+            images: {
+              orderBy: { sort_order: 'asc' },
+            },
+            variants: {
+              where: { status: variant_status.ACTIVE },
+              include: {
+                images: { orderBy: { sort_order: 'asc' } },
+                inventories: true,
+                attributes: {
+                  include: {
+                    attribute_value: {
+                      include: { attribute: true },
+                    },
+                  },
+                },
+                offers: {
+                  include: { offer: true },
+                },
+              },
+            },
+            reviews: {
+              where: { status: review_status.APPROVED },
+              include: {
+                customer: {
+                  select: { first_name: true, last_name: true },
+                },
+              },
+              orderBy: { created_at: 'desc' },
+            },
+          },
+        });
+      }
+    }
 
     if (!product) {
       throw new NotFoundException('Product not found');

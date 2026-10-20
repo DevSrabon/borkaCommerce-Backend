@@ -17,6 +17,10 @@ export class SiteSettingsService implements OnModuleInit {
 
   // Default fallback values matching .env lines 4-23 & delivery configuration
   private readonly defaultSettings: Record<string, string> = {
+    // Branding & Identity
+    site_name: 'Saba Al Wadi Haute Couture',
+    site_tagline: 'Luxury Abayas & Designer Modest Wear | Best Abaya Shop In Dubai',
+
     // Currency & Exchange Rates (Base AED)
     default_currency: 'AED',
     currency_rate_usd: '0.272',
@@ -150,6 +154,14 @@ export class SiteSettingsService implements OnModuleInit {
     social_youtube: 'https://youtube.com/@sabaalwadi',
     social_pinterest: 'https://pinterest.com/sabaalwadi',
     social_tiktok: 'https://tiktok.com/@sabaalwadi',
+
+    // Dynamic Contact Map Configuration
+    contact_map_query: '25.278473815956392,55.345878906731265',
+    contact_map_embed_url: 'https://maps.google.com/maps?q=25.278473815956392,55.345878906731265&hl=en&z=17&output=embed',
+    contact_map_directions_url: 'https://www.google.com/maps/search/?api=1&query=25.278473815956392,55.345878906731265',
+    contact_map_title: 'Abu Hail Centre Location',
+    contact_map_subtitle: 'Al Habtoor Building, Abu Hail, Deira-Dubai (P.O Box-67242)',
+    contact_map_zoom: '17',
   };
 
   // ─── Dynamic Setting Getter ──────────────────────────────────────────────
@@ -354,6 +366,12 @@ export class SiteSettingsService implements OnModuleInit {
     'google_analytics_id',
     'facebook_pixel_id',
     'google_search_console_tag',
+    'contact_map_query',
+    'contact_map_embed_url',
+    'contact_map_directions_url',
+    'contact_map_title',
+    'contact_map_subtitle',
+    'contact_map_zoom',
     'GOOGLE_ANALYTICS_ID',
     'FACEBOOK_PIXEL_ID',
     'GOOGLE_CLIENT_ID',
@@ -498,14 +516,22 @@ export class SiteSettingsService implements OnModuleInit {
       settings['ADMIN_EMAIL'] = primaryEmail;
     }
 
-    const ops = Object.entries(settings).map(([key, value]) => {
-      const cleanVal = value !== undefined && value !== null ? String(value) : '';
-      return this.prisma.site_settings.upsert({
-        where: { key },
-        update: { value: cleanVal },
-        create: { key, value: cleanVal },
+    const invalidKeys = new Set(['success', 'data', 'message', 'meta', 'status']);
+
+    const ops = Object.entries(settings)
+      .filter(([key, value]) => {
+        if (!key || invalidKeys.has(key) || /^\d+$/.test(key)) return false;
+        if (value === '[object Object]' || (typeof value === 'object' && value !== null)) return false;
+        return true;
+      })
+      .map(([key, value]) => {
+        const cleanVal = value !== undefined && value !== null ? String(value) : '';
+        return this.prisma.site_settings.upsert({
+          where: { key },
+          update: { value: cleanVal },
+          create: { key, value: cleanVal },
+        });
       });
-    });
     await Promise.all(ops);
     return this.getAllSettings();
   }

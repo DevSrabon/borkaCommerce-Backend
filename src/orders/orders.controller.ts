@@ -44,6 +44,16 @@ export class OrdersController {
     return this.ordersService.customerCancelOrder(customer.id, id);
   }
 
+  @UseGuards(AuthGuard)
+  @Patch('ecommerce/orders/:id/address')
+  async updateMyOrderAddress(
+    @Param('id') id: string,
+    @CurrentUser() customer: any,
+    @Body() updateOrderAddressDto: UpdateOrderAddressDto,
+  ) {
+    return this.ordersService.customerUpdateOrderAddress(customer.id, id, updateOrderAddressDto);
+  }
+
   // --- STRIPE DIRECT CONFIRMATION (Legacy Fallback) ---
   @Post('ecommerce/orders/confirm-stripe')
   async confirmStripeDirect(

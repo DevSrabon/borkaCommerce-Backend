@@ -519,11 +519,10 @@ async function main() {
     data: {
       customer_id: customerFatima.id,
       country: 'United Arab Emirates',
+      phone: '+971 50 123 4567',
       city: 'Dubai',
-      area: 'Dubai Marina',
-      street: 'Al Marsa Street',
-      building: 'Marina Gate 2, Apt 1804',
       postal_code: '00000',
+      full_address: 'Marina Gate 2, Apt 1804, Al Marsa Street, Dubai Marina',
       is_default: true,
     },
   });
@@ -532,11 +531,10 @@ async function main() {
     data: {
       customer_id: adminSrabon.id,
       country: 'United Arab Emirates',
+      phone: '+971 52 345 6789',
       city: 'Abu Dhabi',
-      area: 'Al Reem Island',
-      street: 'Marina Square',
-      building: 'Tower 3, Flat 9A',
       postal_code: '00000',
+      full_address: 'Tower 3, Flat 9A, Marina Square, Al Reem Island',
       is_default: true,
     },
   });

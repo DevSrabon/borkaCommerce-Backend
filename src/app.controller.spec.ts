@@ -16,7 +16,7 @@ describe('AppController', () => {
 
   describe('root', () => {
     it('should return API status object', () => {
-      expect(appController.getHello()).toHaveProperty('name', 'Saba Al Wadi API (BorkaCommerce)');
+      expect(appController.getHealth()).toHaveProperty('status', 'ok');
     });
   });
 });

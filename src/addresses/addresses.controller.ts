@@ -1,6 +1,6 @@
-import { Controller, Get, Post, Delete, Patch, Param, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Patch, Put, Param, Body, UseGuards } from '@nestjs/common';
 import { AddressesService } from './addresses.service';
-import { CreateAddressDto } from './dto/address.dto';
+import { CreateAddressDto, UpdateAddressDto } from './dto/address.dto';
 import { AuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 
@@ -12,6 +12,24 @@ export class AddressesController {
   @Post()
   create(@CurrentUser() customer: any, @Body() createAddressDto: CreateAddressDto) {
     return this.addressesService.create(customer.id, createAddressDto);
+  }
+
+  @Patch(':id')
+  update(
+    @CurrentUser() customer: any,
+    @Param('id') id: string,
+    @Body() updateAddressDto: UpdateAddressDto,
+  ) {
+    return this.addressesService.update(customer.id, id, updateAddressDto);
+  }
+
+  @Put(':id')
+  updatePut(
+    @CurrentUser() customer: any,
+    @Param('id') id: string,
+    @Body() updateAddressDto: UpdateAddressDto,
+  ) {
+    return this.addressesService.update(customer.id, id, updateAddressDto);
   }
 
   @Get()

@@ -121,13 +121,40 @@ export class OrdersService implements OnModuleInit {
 
       const now = new Date();
 
+      // Pre-fetch all active offers and category taxonomy for robust offer resolution
+      const [allActiveOffersInDb, allCategories] = await Promise.all([
+        tx.offers.findMany({
+          where: {
+            status: offer_status.ACTIVE,
+            start_date: { lte: now },
+            end_date: { gte: now },
+          },
+          include: {
+            categories: true,
+            products: true,
+          },
+        }),
+        tx.categories.findMany({
+          select: { id: true, parent_id: true },
+        }),
+      ]);
+
+      const categoryParentMap = new Map<string, string | null>(
+        allCategories.map((c) => [c.id, c.parent_id])
+      );
+
       // 2. Process items, check stock, and calculate subtotal
       for (const itemDto of dto.items) {
-        // Fetch variant with product and active offers
+        // Fetch variant with product, all associated categories and active offers
         const variant = await tx.product_variants.findUnique({
           where: { id: itemDto.variant_id },
           include: {
-            product: true,
+            product: {
+              include: {
+                product_categories: true,
+                related_categories: true,
+              },
+            },
             offers: {
               include: { offer: true },
             },
@@ -159,22 +186,45 @@ export class OrdersService implements OnModuleInit {
           );
         }
 
-        // Calculate dynamic variant price using highest priority offer
-        const activeOffers = variant.offers
-          .map((op) => op.offer)
-          .filter(
-            (o) =>
-              o.status === offer_status.ACTIVE &&
-              new Date(o.start_date) <= now &&
-              new Date(o.end_date) >= now,
+        // Match all categories associated with this product including parent categories
+        const productCategoryIds = [
+          ...(variant.product.product_categories || []).map((pc: any) => pc.category_id),
+          ...(variant.product.related_categories || []).map((rc: any) => rc.category_id),
+        ];
+
+        const allProductCategoryIds = new Set<string>(productCategoryIds);
+        for (const catId of productCategoryIds) {
+          const parentId = categoryParentMap.get(catId);
+          if (parentId) allProductCategoryIds.add(parentId);
+        }
+
+        // Match applicable active offers: global, category-specific, product/variant-specific
+        const allActiveOffers = allActiveOffersInDb.filter((offer) => {
+          const isGlobal =
+            (!offer.categories || offer.categories.length === 0) &&
+            (!offer.products || offer.products.length === 0);
+          if (isGlobal) return true;
+
+          const matchesCategory = offer.categories?.some((oc: any) =>
+            allProductCategoryIds.has(oc.category_id)
           );
+          if (matchesCategory) return true;
+
+          const matchesVariant = offer.products?.some(
+            (op: any) => op.variant_id === variant.id
+          );
+          if (matchesVariant) return true;
+
+          return false;
+        });
+
+        allActiveOffers.sort((a, b) => b.priority - a.priority);
 
         let finalPrice = Number(variant.price);
         let discountApplied = 0;
 
-        if (activeOffers.length > 0) {
-          activeOffers.sort((a, b) => b.priority - a.priority);
-          const topOffer = activeOffers[0];
+        if (allActiveOffers.length > 0) {
+          const topOffer = allActiveOffers[0];
           if (topOffer.discount_type === 'PERCENTAGE') {
             const disc = finalPrice * (Number(topOffer.discount_value) / 100);
             finalPrice -= disc;
@@ -185,6 +235,9 @@ export class OrdersService implements OnModuleInit {
             discountApplied = disc;
           }
         }
+
+        finalPrice = Number(finalPrice.toFixed(2));
+        discountApplied = Number(discountApplied.toFixed(2));
 
         const itemSubtotal = finalPrice * itemDto.quantity;
         subtotal += itemSubtotal;
@@ -258,16 +311,23 @@ export class OrdersService implements OnModuleInit {
 
       const isCod = dto.payment_method === 'CASH_ON_DELIVERY';
 
-      // Resolve user's selected dynamic currency and exchange rate
+      // Resolve user's selected dynamic currency and exchange rate from site settings
       const selectedCurrency = (dto.currency || 'AED').toUpperCase();
-      const rate = CURRENCY_RATES[selectedCurrency] || 1;
+      let rate = CURRENCY_RATES[selectedCurrency] || 1;
+      if (selectedCurrency !== 'AED') {
+        const dynamicRateStr = await this.siteSettingsService.getSetting(`currency_rate_${selectedCurrency.toLowerCase()}`);
+        const parsedRate = parseFloat(dynamicRateStr);
+        if (!isNaN(parsedRate) && parsedRate > 0) {
+          rate = parsedRate;
+        }
+      }
 
       // Converted financial amounts in customer's selected currency
       const orderSubtotal = Number((subtotal * rate).toFixed(2));
       const orderDiscount = Number((discount * rate).toFixed(2));
       const orderShipping = Number((shipping * rate).toFixed(2));
       const orderTax = Number((tax * rate).toFixed(2));
-      const orderTotal = Number((total * rate).toFixed(2));
+      const orderTotal = Number((orderSubtotal - orderDiscount + orderShipping).toFixed(2));
 
       // 5. Create Order record with dynamic currency
       const order = await tx.orders.create({
@@ -286,11 +346,10 @@ export class OrdersService implements OnModuleInit {
           payment_method: isCod ? payment_method.CASH_ON_DELIVERY : payment_method.STRIPE,
           coupon_id: couponId,
           shipping_country: address.country,
+          shipping_phone: address.phone,
           shipping_city: address.city,
-          shipping_area: address.area,
-          shipping_street: address.street,
-          shipping_building: address.building,
           shipping_postal_code: address.postal_code,
+          shipping_full_address: address.full_address,
         },
       });
 
@@ -1649,14 +1708,15 @@ export class OrdersService implements OnModuleInit {
 
       // 2. If address provided, create customer_address record
       if (dto.address && customerId) {
+        const fullAddr = (dto.address.full_address || 'Manual Order Address').trim();
         await tx.customer_addresses.create({
           data: {
             customer_id: customerId,
-            street: dto.address.street || 'Manual Order Address',
-            city: dto.address.city || 'Dubai',
-            area: dto.address.state || 'Dubai Central',
             country: dto.address.country || 'UAE',
+            phone: dto.customer_phone || dto.address.phone || '+971 50 000 0000',
+            city: dto.address.city || 'Dubai',
             postal_code: dto.address.postal_code || '00000',
+            full_address: fullAddr,
             is_default: false,
           },
         }).catch(() => {});
@@ -1736,10 +1796,10 @@ export class OrdersService implements OnModuleInit {
           tracking_url: dto.tracking_url || null,
           delivery_notes: dto.delivery_notes || null,
           shipping_country: dto.address?.country || 'UAE',
+          shipping_phone: dto.customer_phone || dto.address?.phone || null,
           shipping_city: dto.address?.city || 'Dubai',
-          shipping_area: dto.address?.state || 'Dubai Central',
-          shipping_street: dto.address?.street || 'Manual Order Address',
           shipping_postal_code: dto.address?.postal_code || '00000',
+          shipping_full_address: (dto.address?.full_address || 'Manual Order Address').trim(),
           items: {
             create: orderItemsToCreate,
           },
@@ -1877,6 +1937,7 @@ export class OrdersService implements OnModuleInit {
           shipping,
           discount,
           total,
+          currency: dto.currency || order.currency,
           items: {
             create: newItemsToCreate,
           },
@@ -1909,18 +1970,79 @@ export class OrdersService implements OnModuleInit {
       throw new NotFoundException(`Order with ID ${id} not found`);
     }
 
+    // Only allow address change if order is in PENDING, CONFIRMED, or PACKED status
+    const editableStatuses: string[] = [order_status.PENDING, order_status.CONFIRMED, order_status.PACKED];
+    if (!editableStatuses.includes(order.status)) {
+      throw new BadRequestException(
+        `Delivery address cannot be updated when order is ${order.status}. Changes are only allowed for Pending, Confirmed, or Packed orders.`
+      );
+    }
+
     const dataToUpdate: any = {};
     if (dto.country !== undefined) dataToUpdate.shipping_country = dto.country?.trim() || null;
+    if (dto.phone !== undefined) dataToUpdate.shipping_phone = dto.phone?.trim() || null;
     if (dto.city !== undefined) dataToUpdate.shipping_city = dto.city?.trim() || null;
-    if (dto.area !== undefined) dataToUpdate.shipping_area = dto.area?.trim() || null;
-    if (dto.street !== undefined) dataToUpdate.shipping_street = dto.street?.trim() || null;
-    if (dto.building !== undefined) dataToUpdate.shipping_building = dto.building?.trim() || null;
     if (dto.postal_code !== undefined) dataToUpdate.shipping_postal_code = dto.postal_code?.trim() || null;
+    if (dto.full_address !== undefined) {
+      dataToUpdate.shipping_full_address = dto.full_address?.trim() || null;
+    }
 
     await this.prisma.orders.update({
       where: { id },
       data: dataToUpdate,
     });
+
+    if (dto.phone && dto.phone.trim() && order.customer_id) {
+      await this.prisma.customers.update({
+        where: { id: order.customer_id },
+        data: { phone: dto.phone.trim() },
+      }).catch(() => {});
+    }
+
+    return this.findOne(id);
+  }
+
+  async customerUpdateOrderAddress(customerId: string, id: string, dto: UpdateOrderAddressDto) {
+    const order = await this.prisma.orders.findUnique({
+      where: { id },
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Order with ID ${id} not found`);
+    }
+
+    if (order.customer_id !== customerId) {
+      throw new BadRequestException('Unauthorized access to update this order');
+    }
+
+    // Only allow address change if order is in PENDING, CONFIRMED, or PACKED status
+    const editableStatuses: string[] = [order_status.PENDING, order_status.CONFIRMED, order_status.PACKED];
+    if (!editableStatuses.includes(order.status)) {
+      throw new BadRequestException(
+        `Delivery address cannot be updated at this stage. Order is already "${order.status}". Address changes are only allowed for Pending, Confirmed, or Packed orders.`
+      );
+    }
+
+    const dataToUpdate: any = {};
+    if (dto.country !== undefined) dataToUpdate.shipping_country = dto.country?.trim() || null;
+    if (dto.phone !== undefined) dataToUpdate.shipping_phone = dto.phone?.trim() || null;
+    if (dto.city !== undefined) dataToUpdate.shipping_city = dto.city?.trim() || null;
+    if (dto.postal_code !== undefined) dataToUpdate.shipping_postal_code = dto.postal_code?.trim() || null;
+    if (dto.full_address !== undefined) {
+      dataToUpdate.shipping_full_address = dto.full_address?.trim() || null;
+    }
+
+    await this.prisma.orders.update({
+      where: { id },
+      data: dataToUpdate,
+    });
+
+    if (dto.phone && dto.phone.trim()) {
+      await this.prisma.customers.update({
+        where: { id: customerId },
+        data: { phone: dto.phone.trim() },
+      }).catch(() => {});
+    }
 
     return this.findOne(id);
   }

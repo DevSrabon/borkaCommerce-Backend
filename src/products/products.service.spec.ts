@@ -16,11 +16,17 @@ describe('ProductsService product requirements', () => {
   it('persists all SEO fields', async () => {
     const createdProduct = { id: 'product-1' };
     const tx = {
-      products: { create: jest.fn().mockResolvedValue(createdProduct) },
+      products: {
+        create: jest.fn().mockResolvedValue(createdProduct),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
       product_images: { createMany: jest.fn().mockResolvedValue({ count: 1 }) },
     };
     const prisma = {
-      products: { findUnique: jest.fn().mockResolvedValue(null) },
+      products: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
       $transaction: jest.fn((callback) => callback(tx)),
     };
     const service = new ProductsService(prisma as any, uploadFiles as any, mailService as any);

@@ -58,3 +58,59 @@ export class AuthGuard implements CanActivate {
     return null;
   }
 }
+
+@Injectable()
+export class OptionalAuthGuard implements CanActivate {
+  constructor(private prisma: PrismaService) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const request = context.switchToHttp().getRequest();
+    const token = this.extractToken(request);
+    if (!token) {
+      return true;
+    }
+
+    try {
+      const session = await this.prisma.sessions.findUnique({
+        where: { token },
+        include: { customer: true },
+      });
+
+      if (session && new Date(session.expires_at) >= new Date() && !session.customer?.is_blocked) {
+        request.user = session.customer;
+      }
+    } catch {
+      // Ignore session errors in optional auth
+    }
+
+    return true;
+  }
+
+  private extractToken(request: any): string | null {
+    const authHeader = request.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      return authHeader.substring(7);
+    }
+
+    const cookieHeader = request.headers.cookie;
+    if (cookieHeader) {
+      const cookies = cookieHeader.split(';').reduce((acc: any, c: string) => {
+        const parts = c.trim().split('=');
+        const key = parts[0];
+        const val = parts.slice(1).join('=');
+        if (key && val) acc[key] = decodeURIComponent(val);
+        return acc;
+      }, {} as Record<string, string>);
+
+      return (
+        cookies['better-auth.session_token'] ||
+        cookies['__secure-better-auth.session_token'] ||
+        cookies['session_token'] ||
+        null
+      );
+    }
+
+    return null;
+  }
+}
+

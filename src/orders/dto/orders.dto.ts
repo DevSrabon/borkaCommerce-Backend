@@ -100,11 +100,11 @@ export class CreateManualOrderDto {
 
   @IsOptional()
   address?: {
-    street?: string;
-    city?: string;
-    state?: string;
-    postal_code?: string;
     country?: string;
+    phone?: string;
+    city?: string;
+    postal_code?: string;
+    full_address?: string;
   };
 
   @IsArray()
@@ -161,6 +161,10 @@ export class UpdateOrderItemsDto {
 
   @IsOptional()
   discount?: number;
+
+  @IsOptional()
+  @IsString()
+  currency?: string;
 }
 
 export class UpdateOrderAddressDto {
@@ -170,21 +174,17 @@ export class UpdateOrderAddressDto {
 
   @IsOptional()
   @IsString()
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
   city?: string;
 
   @IsOptional()
   @IsString()
-  area?: string;
-
-  @IsOptional()
-  @IsString()
-  street?: string;
-
-  @IsOptional()
-  @IsString()
-  building?: string;
-
-  @IsOptional()
-  @IsString()
   postal_code?: string;
+
+  @IsOptional()
+  @IsString()
+  full_address?: string;
 }

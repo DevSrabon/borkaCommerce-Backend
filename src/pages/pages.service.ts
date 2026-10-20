@@ -255,7 +255,7 @@ export class PagesService implements OnModuleInit {
           columns: 3,
           items: [
             {
-              icon: 'Sparkles',
+              icon: 'Crown',
               title: 'Wide Range of Products',
               description: 'From fashion and electronics to home essentials, we have everything you need.',
             },

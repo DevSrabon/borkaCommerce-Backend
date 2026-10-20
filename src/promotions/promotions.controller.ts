@@ -3,7 +3,7 @@ import type { Response } from 'express';
 import { PromotionsService } from './promotions.service';
 import { CreateOfferDto, UpdateOfferDto, CreateCouponDto, UpdateCouponDto, ValidateCouponDto } from './dto/promotions.dto';
 import { AdminGuard } from '../auth/admin.guard';
-import { AuthGuard } from '../auth/auth.guard';
+import { AuthGuard, OptionalAuthGuard } from '../auth/auth.guard';
 
 @Controller()
 export class PromotionsController {
@@ -85,10 +85,10 @@ export class PromotionsController {
     return this.promotionsService.findActivePromotions();
   }
 
-  @UseGuards(AuthGuard)
+  @UseGuards(OptionalAuthGuard)
   @Post('ecommerce/promotions/validate-coupon')
   validateCoupon(@Body() validateCouponDto: ValidateCouponDto, @Req() req: any) {
-    // Validate coupon and pass current customer's ID to check usage limits
+    // Validate coupon and pass customer's ID if authenticated to check per-customer usage limits
     return this.promotionsService.validateCoupon(validateCouponDto, req.user?.id);
   }
 }

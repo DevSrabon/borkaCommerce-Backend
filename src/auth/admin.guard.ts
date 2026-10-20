@@ -29,7 +29,11 @@ export class AdminGuard extends AuthGuard {
     const configuredEmails = adminEmailsEnv.split(',').map((email) => email.trim().toLowerCase()).filter(Boolean);
     const adminEmails = [...new Set([...hardcodedAdmins, ...configuredEmails])];
 
-    const isAdmin = user.role === 'ADMIN' || adminEmails.includes(user.email.toLowerCase());
+    const userEmail = user.email ? user.email.trim().toLowerCase() : '';
+    const isAdmin =
+      user.role === 'ADMIN' ||
+      user.role === 'SUPER_ADMIN' ||
+      (userEmail && adminEmails.includes(userEmail));
 
     if (!isAdmin) {
       throw new ForbiddenException('Admin privilege required to perform this action');

@@ -346,16 +346,15 @@ model accounts {
 
 // 15. Customer Addresses
 model customer_addresses {
-  id          String    @id @default(uuid())
-  customer_id String
-  customer    customers @relation(fields: [customer_id], references: [id], onDelete: Cascade)
-  country     String
-  city        String
-  area        String
-  street      String
-  building    String?
-  postal_code String?
-  is_default  Boolean   @default(false)
+  id           String    @id @default(uuid())
+  customer_id  String
+  customer     customers @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+  country      String
+  phone        String
+  city         String
+  postal_code  String?
+  full_address String
+  is_default   Boolean   @default(false)
 }
 
 // 16. Cart
@@ -401,12 +400,11 @@ model orders {
   tracking_number  String?
   tracking_url     String?
   delivery_notes   String?
-  shipping_country     String?
-  shipping_city        String?
-  shipping_area        String?
-  shipping_street      String?
-  shipping_building    String?
-  shipping_postal_code String?
+  shipping_country      String?
+  shipping_phone        String?
+  shipping_city         String?
+  shipping_postal_code  String?
+  shipping_full_address String?
   created_at     DateTime       @default(now())
   updated_at     DateTime       @updatedAt
 

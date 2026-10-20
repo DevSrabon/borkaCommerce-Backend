@@ -185,11 +185,10 @@ try {
     # Get or create an address for customer
     $addressBody = @{
         country = "United Arab Emirates"
+        phone = "+971 50 999 8888"
         city = "Dubai"
-        area = "Downtown"
-        street = "Sheikh Zayed Road"
-        building = "Burj Crown Tower"
         postal_code = "00000"
+        full_address = "Burj Crown Tower, Sheikh Zayed Road, Downtown Dubai"
         is_default = $true
     } | ConvertTo-Json
 
