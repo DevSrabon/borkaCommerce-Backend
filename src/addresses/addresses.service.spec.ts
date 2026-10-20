@@ -122,4 +122,19 @@ describe('AddressesService Unit Tests', () => {
       await expect(service.update('c-1', 'a-none', { city: 'Dubai' })).rejects.toThrow(NotFoundException);
     });
   });
+
+  describe('findOne address', () => {
+    it('returns address if found', async () => {
+      const mockAddr = { id: 'addr-1', customer_id: 'c-1', full_address: 'Dubai Mall Area' };
+      prisma.customer_addresses.findFirst.mockResolvedValue(mockAddr);
+
+      const result = await service.findOne('c-1', 'addr-1');
+      expect(result).toEqual(mockAddr);
+    });
+
+    it('throws NotFoundException if address is not found', async () => {
+      prisma.customer_addresses.findFirst.mockResolvedValue(null);
+      await expect(service.findOne('c-1', 'addr-missing')).rejects.toThrow(NotFoundException);
+    });
+  });
 });

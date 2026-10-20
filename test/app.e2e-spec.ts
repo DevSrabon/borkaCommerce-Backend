@@ -66,6 +66,14 @@ describe('eCommerce Core API & E2E Tests', () => {
       expect(res.body.message).toContain('Session token is missing');
     });
 
+    it('GET /ecommerce/addresses/:id without auth token -> rejects with 401 Unauthorized', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/ecommerce/addresses/23cc60a2-0efe-4874-85aa-2eb63fe1d0c6')
+        .expect(401);
+
+      expect(res.body.message).toContain('Session token is missing');
+    });
+
     it('POST /admin/orders without admin token -> rejects with 401 Unauthorized', async () => {
       await request(app.getHttpServer())
         .get('/admin/orders')

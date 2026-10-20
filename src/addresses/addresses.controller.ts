@@ -37,6 +37,12 @@ export class AddressesController {
     return this.addressesService.findByCustomer(customer.id);
   }
 
+  @Get(':id')
+  findOne(@CurrentUser() customer: any, @Param('id') id: string) {
+    const isAdmin = customer?.role === 'ADMIN';
+    return this.addressesService.findOne(customer.id, id, isAdmin);
+  }
+
   @Delete(':id')
   delete(@CurrentUser() customer: any, @Param('id') id: string) {
     return this.addressesService.delete(customer.id, id);

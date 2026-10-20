@@ -107,6 +107,20 @@ export class AddressesService {
     });
   }
 
+  async findOne(customerId: string, addressId: string, isAdmin = false) {
+    const where: any = { id: addressId };
+    if (!isAdmin) {
+      where.customer_id = customerId;
+    }
+    const address = await this.prisma.customer_addresses.findFirst({
+      where,
+    });
+    if (!address) {
+      throw new NotFoundException('Delivery address not found');
+    }
+    return address;
+  }
+
   async delete(customerId: string, addressId: string) {
     return this.prisma.customer_addresses.deleteMany({
       where: { id: addressId, customer_id: customerId },
