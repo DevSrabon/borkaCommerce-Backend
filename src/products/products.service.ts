@@ -3,6 +3,7 @@ import { PrismaService } from '../database/prisma.service';
 import { CreateProductDto, UpdateProductDto } from './dto/product.dto';
 import { product_status, variant_status, inventory_transaction_type, offer_status, review_status } from '@prisma/client';
 import { UploadFilesService } from '../uploads/upload-files.service';
+import { UploadFolder } from '../uploads/image-upload.middleware';
 import { MailService } from '../mail/mail.service';
 
 @Injectable()
@@ -694,10 +695,15 @@ export class ProductsService {
   }
 
   private async removeUploadedProductImage(imageUrl: string) {
-    const marker = '/uploads/product/';
-    const markerIndex = imageUrl.indexOf(marker);
-    if (markerIndex === -1) return;
-    await this.uploadFilesService.remove(imageUrl.slice(markerIndex + '/uploads'.length), 'product');
+    const folders: UploadFolder[] = ['product', 'product_files'];
+    for (const folder of folders) {
+      const marker = `/uploads/${folder}/`;
+      const markerIndex = imageUrl.indexOf(marker);
+      if (markerIndex !== -1) {
+        await this.uploadFilesService.remove(imageUrl.slice(markerIndex + '/uploads'.length), folder);
+        return;
+      }
+    }
   }
 
   private variantImageUrl(image: string | { image_url?: string; image?: string }) {

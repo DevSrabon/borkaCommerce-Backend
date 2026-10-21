@@ -16,13 +16,17 @@ async function bootstrap() {
 
   // Ensure uploads folder and sub-folders exist
   const uploadsPath = path.join(process.cwd(), 'uploads');
-  const subFolders = ['media', 'product', 'customer', 'banner', 'category', 'chat', 'blog'];
+  const subFolders = [
+    'media', 'product', 'customer', 'banner', 'category', 'chat', 'blog',
+    'product_files', 'product_category', 'banner_files', 'blog_files', 'website_settings_files', 'ecommerce_files'
+  ];
   for (const folder of [uploadsPath, ...subFolders.map((f) => path.join(uploadsPath, f))]) {
     if (!fs.existsSync(folder)) fs.mkdirSync(folder, { recursive: true });
   }
 
   // Serve static uploaded files (covers all sub-folders automatically)
   app.use('/uploads', express.static(uploadsPath));
+  app.use('/saba-media', express.static(uploadsPath));
 
   // Increase payload size limit to prevent "request entity too large" errors (50MB)
   app.use(express.json({ limit: '50mb' }));
