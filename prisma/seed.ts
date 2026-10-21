@@ -461,9 +461,9 @@ async function main() {
     },
   });
 
-  const customerFatima = await prisma.customers.create({
+  const customerSrabon = await prisma.customers.create({
     data: {
-      first_name: 'Fatima',
+      first_name: 'Srabon',
       last_name: 'Al-Zahra',
       email: 'srabon@example.com',
       phone: '+971509876543',
@@ -503,7 +503,7 @@ async function main() {
   // Addresses
   const srabonAddr = await prisma.customer_addresses.create({
     data: {
-      customer_id: customerFatima.id,
+      customer_id: customerSrabon.id,
       country: 'United Arab Emirates',
       phone: '+971 50 123 4567',
       city: 'Dubai',
@@ -515,7 +515,7 @@ async function main() {
 
   const srabonAddr = await prisma.customer_addresses.create({
     data: {
-      customer_id: adminSrabon.id,
+      customer_id: customerSrabon.id,
       country: 'United Arab Emirates',
       phone: '+971 52 345 6789',
       city: 'Abu Dhabi',
@@ -532,11 +532,11 @@ async function main() {
   const var3 = await prisma.product_variants.findFirst({ where: { product_id: product3.id } });
 
   if (var1 && var2 && var3) {
-    // Order 1 for Fatima
+    // Order 1 for Srabon
     const order1 = await prisma.orders.create({
       data: {
         order_number: 'BC-2026-1001',
-        customer_id: customerFatima.id,
+        customer_id: customerSrabon.id,
         status: 'DELIVERED',
         subtotal: 450.0,
         discount: 67.5, // 15% discount
@@ -651,7 +651,7 @@ async function main() {
       },
       {
         product_id: product2.id,
-        customer_id: customerFatima.id,
+        customer_id: customerSrabon.id,
         rating: 5,
         review: 'Wore this exquisite silk abaya for our Eid family gathering and everyone asked where I got it. The hand-embroidery on the sleeves looks royal!',
         status: 'APPROVED',

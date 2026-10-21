@@ -421,7 +421,7 @@ async function main() {
       fabric: fCrepe,
     },
     {
-      name: 'Fatima Flared French Lace Abaya',
+      name: 'Srabon Flared French Lace Abaya',
       slug: 'srabon-flared-french-lace-abaya',
       desc: 'Romantic scalloped Chantilly lace adorns the bell cuffs and sweeping hemline. Crafted from ultra-smooth, lightweight crepe for effortless evening flow.',
       shortDesc: 'Intricate French Chantilly scalloped lace trimming sweeping flared bell sleeves.',

@@ -124,7 +124,7 @@ export class BlogsService implements OnModuleInit {
             await this.prisma.blog_comments.create({
               data: {
                 blog_id: created.id,
-                author_name: 'Fatima Al Mansoori',
+                author_name: 'Srabon Al Mansoori',
                 author_email: 'srabon@example.com',
                 content: 'MashaAllah, the craftsmanship of your Japanese crepe abayas is unmatched! Visited your Dubai boutique last week and the tailoring was impeccable.',
                 status: 'APPROVED',

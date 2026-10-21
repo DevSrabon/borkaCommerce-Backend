@@ -64,14 +64,14 @@ try {
     Assert-Test ($statusCode -eq 401 -or $statusCode -eq 403) "Blocked customer login was properly rejected with $statusCode"
 }
 
-# 5. Test Auth - Verified Customer Login (Fatima)
+# 5. Test Auth - Verified Customer Login (Srabon)
 $customerToken = $null
-$customerFatima = $null
+$customerSrabon = $null
 try {
     $srabonLogin = Invoke-RestMethod -Uri "$baseUrl/ecommerce/auth/login" -Method Post -ContentType "application/json" -Body '{"email":"srabon@example.com","password":"password123"}'
     $customerToken = $srabonLogin.token
-    $customerFatima = $srabonLogin.user
-    Assert-Test ($customerToken -ne $null -and $srabonLogin.user.role -eq "CUSTOMER") "Fatima logged in successfully with CUSTOMER role"
+    $customerSrabon = $srabonLogin.user
+    Assert-Test ($customerToken -ne $null -and $srabonLogin.user.role -eq "CUSTOMER") "Srabon logged in successfully with CUSTOMER role"
 } catch {
     Assert-Test $false "Customer login failed: $_"
 }
@@ -102,9 +102,9 @@ try {
     $customersList = Invoke-RestMethod -Uri "$baseUrl/admin/customers" -Method Get -Headers $adminHeaders
     Assert-Test ($customersList.Count -ge 3) "Admin successfully retrieved customer list ($($customersList.Count) customers)"
 
-    # Get Fatima's details (orders + reviews)
-    $srabonDetails = Invoke-RestMethod -Uri "$baseUrl/admin/customers/$($customerFatima.id)" -Method Get -Headers $adminHeaders
-    Assert-Test ($srabonDetails.orders.Count -ge 1) "Admin retrieved Fatima's details with order history ($($srabonDetails.orders.Count) orders)"
+    # Get Srabon's details (orders + reviews)
+    $srabonDetails = Invoke-RestMethod -Uri "$baseUrl/admin/customers/$($customerSrabon.id)" -Method Get -Headers $adminHeaders
+    Assert-Test ($srabonDetails.orders.Count -ge 1) "Admin retrieved Srabon's details with order history ($($srabonDetails.orders.Count) orders)"
 } catch {
     Assert-Test $false "Admin customer management endpoints failed: $_"
 }
@@ -123,8 +123,8 @@ try {
 try {
     # Get all products
     $allProds = Invoke-RestMethod -Uri "$baseUrl/ecommerce/products" -Method Get
-    # Product Unbought: Festive Sage Green Silk Bisht Abaya (Fatima NEVER bought)
-    # Product 2: Luxury Silk Embroidered Abaya (Fatima BOUGHT)
+    # Product Unbought: Festive Sage Green Silk Bisht Abaya (Srabon NEVER bought)
+    # Product 2: Luxury Silk Embroidered Abaya (Srabon BOUGHT)
     $prodUnbought = $allProds | Where-Object { $_.slug -eq "festive-sage-green-silk-bisht-abaya" }
     $prod2 = $allProds | Where-Object { $_.slug -eq "luxury-silk-embroidered-abaya" }
 
@@ -132,11 +132,11 @@ try {
 
     # Check eligibility for unbought product
     $elig1 = Invoke-RestMethod -Uri "$baseUrl/ecommerce/reviews/can-review/$($prodUnbought.id)" -Method Get -Headers $custHeaders
-    Assert-Test ($elig1.can_review -eq $false) "Fatima is correctly NOT eligible to review unbought product ($($prodUnbought.name))"
+    Assert-Test ($elig1.can_review -eq $false) "Srabon is correctly NOT eligible to review unbought product ($($prodUnbought.name))"
 
     # Check eligibility for Product 2 (bought)
     $elig2 = Invoke-RestMethod -Uri "$baseUrl/ecommerce/reviews/can-review/$($prod2.id)" -Method Get -Headers $custHeaders
-    Assert-Test ($elig2.can_review -eq $true) "Fatima is correctly eligible to review purchased product ($($prod2.name))"
+    Assert-Test ($elig2.can_review -eq $true) "Srabon is correctly eligible to review purchased product ($($prod2.name))"
 
     # Attempt to submit review for unbought product -> Must fail with 400/403
     try {
