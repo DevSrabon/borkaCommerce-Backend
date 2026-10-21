@@ -422,7 +422,7 @@ async function main() {
     },
     {
       name: 'Fatima Flared French Lace Abaya',
-      slug: 'fatima-flared-french-lace-abaya',
+      slug: 'srabon-flared-french-lace-abaya',
       desc: 'Romantic scalloped Chantilly lace adorns the bell cuffs and sweeping hemline. Crafted from ultra-smooth, lightweight crepe for effortless evening flow.',
       shortDesc: 'Intricate French Chantilly scalloped lace trimming sweeping flared bell sleeves.',
       price: 640,

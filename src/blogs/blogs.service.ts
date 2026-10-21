@@ -1,6 +1,6 @@
-import { Injectable, NotFoundException, BadRequestException, OnModuleInit, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
-import { CreateBlogDto, UpdateBlogDto, CreateBlogCommentDto, UpdateCommentStatusDto } from './dto/blogs.dto';
+import { CreateBlogCommentDto, CreateBlogDto, UpdateBlogDto } from './dto/blogs.dto';
 
 function slugify(text: string): string {
   return text
@@ -12,8 +12,8 @@ function slugify(text: string): string {
     .replace(/\-\-+/g, '-');
 }
 
-import { NotificationsService } from '../notifications/notifications.service';
 import { MailService } from '../mail/mail.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class BlogsService implements OnModuleInit {
@@ -125,7 +125,7 @@ export class BlogsService implements OnModuleInit {
               data: {
                 blog_id: created.id,
                 author_name: 'Fatima Al Mansoori',
-                author_email: 'fatima@example.com',
+                author_email: 'srabon@example.com',
                 content: 'MashaAllah, the craftsmanship of your Japanese crepe abayas is unmatched! Visited your Dubai boutique last week and the tailoring was impeccable.',
                 status: 'APPROVED',
                 created_at: new Date('2026-08-12T14:30:00Z'),

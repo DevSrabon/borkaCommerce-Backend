@@ -68,10 +68,10 @@ try {
 $customerToken = $null
 $customerFatima = $null
 try {
-    $fatimaLogin = Invoke-RestMethod -Uri "$baseUrl/ecommerce/auth/login" -Method Post -ContentType "application/json" -Body '{"email":"fatima@example.com","password":"password123"}'
-    $customerToken = $fatimaLogin.token
-    $customerFatima = $fatimaLogin.user
-    Assert-Test ($customerToken -ne $null -and $fatimaLogin.user.role -eq "CUSTOMER") "Fatima logged in successfully with CUSTOMER role"
+    $srabonLogin = Invoke-RestMethod -Uri "$baseUrl/ecommerce/auth/login" -Method Post -ContentType "application/json" -Body '{"email":"srabon@example.com","password":"password123"}'
+    $customerToken = $srabonLogin.token
+    $customerFatima = $srabonLogin.user
+    Assert-Test ($customerToken -ne $null -and $srabonLogin.user.role -eq "CUSTOMER") "Fatima logged in successfully with CUSTOMER role"
 } catch {
     Assert-Test $false "Customer login failed: $_"
 }
@@ -101,10 +101,10 @@ try {
     $adminHeaders = @{ "Authorization" = "Bearer $adminToken" }
     $customersList = Invoke-RestMethod -Uri "$baseUrl/admin/customers" -Method Get -Headers $adminHeaders
     Assert-Test ($customersList.Count -ge 3) "Admin successfully retrieved customer list ($($customersList.Count) customers)"
-    
+
     # Get Fatima's details (orders + reviews)
-    $fatimaDetails = Invoke-RestMethod -Uri "$baseUrl/admin/customers/$($customerFatima.id)" -Method Get -Headers $adminHeaders
-    Assert-Test ($fatimaDetails.orders.Count -ge 1) "Admin retrieved Fatima's details with order history ($($fatimaDetails.orders.Count) orders)"
+    $srabonDetails = Invoke-RestMethod -Uri "$baseUrl/admin/customers/$($customerFatima.id)" -Method Get -Headers $adminHeaders
+    Assert-Test ($srabonDetails.orders.Count -ge 1) "Admin retrieved Fatima's details with order history ($($srabonDetails.orders.Count) orders)"
 } catch {
     Assert-Test $false "Admin customer management endpoints failed: $_"
 }

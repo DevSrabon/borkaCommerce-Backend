@@ -443,7 +443,7 @@ async function main() {
     },
     {
       name: 'Fatima Velvet Applique Kimono Abaya',
-      slug: 'fatima-velvet-applique-kimono-abaya',
+      slug: 'srabon-velvet-applique-kimono-abaya',
       desc: 'Sculpted botanical velvet patches meticulously appliqued by hand along the wide bell cuffs and lapel. Comes with an adjustable braided waist cord.',
       shortDesc: 'Hand-cut botanical velvet applique on flared sleeves with braided belt.',
       price: 670,

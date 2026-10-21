@@ -1,5 +1,4 @@
-import { PrismaClient, product_status, variant_status, discount_type, offer_type, offer_status } from '@prisma/client';
-import * as crypto from 'crypto';
+import { discount_type, offer_status, offer_type, PrismaClient, product_status, variant_status } from '@prisma/client';
 
 import * as bcrypt from 'bcryptjs';
 
@@ -449,26 +448,13 @@ async function main() {
 
   // 8. Seed Customers & Addresses
   console.log('Seeding customer accounts...');
-  const adminSrabon = await prisma.customers.create({
-    data: {
-      first_name: 'Srabon',
-      last_name: 'Rahman',
-      email: 'srabon@example.com',
-      phone: '+971501234567',
-      password: hashPassword('password123'),
-      role: 'ADMIN',
-      is_blocked: false,
-      email_verified: true,
-    },
-  });
-
-  const adminMain = await prisma.customers.create({
+  const defaultAdmin = await prisma.customers.create({
     data: {
       first_name: 'Admin',
-      last_name: 'User',
-      email: 'admin@example.com',
-      phone: '+971500000000',
-      password: hashPassword('password123'),
+      last_name: 'Srabon',
+      email: 'et.srabon@gmail.com',
+      phone: '+971501234567',
+      password: hashPassword('12345678'),
       role: 'ADMIN',
       is_blocked: false,
       email_verified: true,
@@ -479,7 +465,7 @@ async function main() {
     data: {
       first_name: 'Fatima',
       last_name: 'Al-Zahra',
-      email: 'fatima@example.com',
+      email: 'srabon@example.com',
       phone: '+971509876543',
       password: hashPassword('password123'),
       role: 'CUSTOMER',
@@ -515,7 +501,7 @@ async function main() {
   });
 
   // Addresses
-  const fatimaAddr = await prisma.customer_addresses.create({
+  const srabonAddr = await prisma.customer_addresses.create({
     data: {
       customer_id: customerFatima.id,
       country: 'United Arab Emirates',
