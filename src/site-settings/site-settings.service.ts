@@ -95,6 +95,11 @@ export class SiteSettingsService implements OnModuleInit {
     AWS_S3_SECRET_ACCESS_KEY: process.env.AWS_S3_SECRET_ACCESS_KEY || '',
     AWS_S3_BUCKET_NAME: process.env.AWS_S3_BUCKET_NAME || '',
 
+    // Dynamic Image Compression & Optimization Configuration
+    IMAGE_COMPRESSION_ENABLED: process.env.IMAGE_COMPRESSION_ENABLED || 'true',
+    IMAGE_COMPRESSION_QUALITY: process.env.IMAGE_COMPRESSION_QUALITY || '80',
+    IMAGE_MAX_WIDTH: process.env.IMAGE_MAX_WIDTH || '1920',
+    IMAGE_CONVERT_WEBP: process.env.IMAGE_CONVERT_WEBP || 'true',
 
     // Flash Sale Spotlight Configuration
     flash_sale_enabled: 'true',
@@ -385,6 +390,10 @@ export class SiteSettingsService implements OnModuleInit {
     'stripe_publishable_key',
     'stripe_mode',
     'stripe_configured',
+    'IMAGE_COMPRESSION_ENABLED',
+    'IMAGE_COMPRESSION_QUALITY',
+    'IMAGE_MAX_WIDTH',
+    'IMAGE_CONVERT_WEBP',
   ]);
 
   async onModuleInit() {

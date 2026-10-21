@@ -40,11 +40,12 @@ describe('OrdersService Address & Status Tests', () => {
     uploadFilesService = {};
 
     service = new OrdersService(
-      prisma,
-      notificationsService,
-      mailService,
-      configService,
-      uploadFilesService as any,
+      prisma as any,
+      configService as any,
+      {} as any, // promotionsService
+      mailService as any,
+      { getSetting: jest.fn() } as any, // siteSettingsService
+      notificationsService as any,
     );
 
     // Mock findOne to return the latest updated order from prisma.orders.update

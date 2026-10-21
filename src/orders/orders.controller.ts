@@ -149,6 +149,22 @@ export class OrdersController {
   }
 
   @UseGuards(AdminGuard)
+  @Post('admin/orders/:id/send-invoice')
+  sendInvoiceEmail(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      recipient_email?: string;
+      subject?: string;
+      message?: string;
+      mode?: 'BODY' | 'ATTACHMENT' | 'BOTH';
+      invoice_html?: string;
+    },
+  ) {
+    return this.ordersService.sendInvoiceEmail(id, body);
+  }
+
+  @UseGuards(AdminGuard)
   @Post('admin/orders/manual')
   createManualOrder(@Body() createManualOrderDto: CreateManualOrderDto) {
     return this.ordersService.createManualOrder(createManualOrderDto);

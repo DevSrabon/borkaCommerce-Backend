@@ -20,6 +20,19 @@ export class PagesService implements OnModuleInit {
 
   // ─── Public Storefront ───────────────────────────────────────────────────
 
+  async getPublishedPages() {
+    return this.prisma.pages.findMany({
+      where: { is_published: true },
+      select: {
+        id: true,
+        title: true,
+        slug: true,
+        updated_at: true,
+      },
+      orderBy: { updated_at: 'desc' },
+    });
+  }
+
   async getPublishedBySlug(slug: string) {
     const cleanSlug = slug.toLowerCase().trim();
     const page = await this.prisma.pages.findUnique({

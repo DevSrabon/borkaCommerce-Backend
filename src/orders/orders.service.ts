@@ -2159,4 +2159,169 @@ export class OrdersService implements OnModuleInit {
   async deleteDeliveryPartner(id: string) {
     return this.prisma.delivery_partners.delete({ where: { id } });
   }
+
+  async sendInvoiceEmail(
+    orderId: string,
+    body: {
+      recipient_email?: string;
+      subject?: string;
+      message?: string;
+      mode?: 'BODY' | 'ATTACHMENT' | 'BOTH';
+      invoice_html?: string;
+    },
+  ) {
+    const order = await this.findOne(orderId);
+    if (!order) {
+      throw new NotFoundException(`Order #${orderId} not found`);
+    }
+
+    const recipient = (
+      body.recipient_email ||
+      order.customer?.email ||
+      (order as any).shipping_email ||
+      ''
+    ).trim();
+
+    if (!recipient || !recipient.includes('@')) {
+      throw new BadRequestException('A valid recipient email address is required');
+    }
+
+    const mode = body.mode || 'BOTH';
+    const orderNumber = order.order_number || order.id;
+    const subject =
+      (body.subject && body.subject.trim()) ||
+      `Official Invoice for Order #${orderNumber} - Saba Al Wadi Couture Atelier`;
+
+    const customerName =
+      `${order.customer?.first_name || ''} ${order.customer?.last_name || ''}`.trim() ||
+      'Valued Customer';
+
+    const defaultMessage = `Dear ${customerName},
+
+Thank you for choosing Saba Al Wadi Couture Atelier. Please find your official invoice for Order #${orderNumber} attached and detailed below.
+
+If you have any questions or require custom tailoring adjustments, please reply to this email or contact our atelier concierge.
+
+Warm regards,
+Saba Al Wadi Couture Atelier
+Dubai, United Arab Emirates`;
+
+    const messageText = body.message !== undefined && body.message !== null ? body.message : defaultMessage;
+    const formattedMessageHtml = messageText
+      .split('\n')
+      .map((line) => line.trim())
+      .map((line) => (line ? `<p style="margin: 0 0 10px 0; line-height: 1.6; font-size: 14px; color: #374151;">${line}</p>` : '<div style="height: 8px;"></div>'))
+      .join('');
+
+    let invoiceHtml = body.invoice_html || '';
+    if (!invoiceHtml) {
+      invoiceHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 650px; margin: 20px auto; border: 1px solid #e5e7eb; border-radius: 8px; padding: 24px; background: #ffffff;">
+          <h2 style="color: #30206b; margin-top: 0;">SABA AL WADI HAUTE COUTURE</h2>
+          <p><strong>Order Number:</strong> #${orderNumber}</p>
+          <p><strong>Date:</strong> ${new Date(order.created_at).toLocaleDateString()}</p>
+          <p><strong>Status:</strong> ${order.status}</p>
+          <p><strong>Total Amount:</strong> ${order.currency || 'AED'} ${Number(order.total).toFixed(2)}</p>
+        </div>
+      `;
+    }
+
+    let emailBodyHtml = '';
+    const attachments: Array<{ filename: string; content: string; contentType: string }> = [];
+
+    const emailContainerHeader = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      </head>
+      <body style="margin: 0; padding: 20px; background-color: #f9fafb; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #111827;">
+        <div style="max-width: 700px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; border: 1px solid #e5e7eb; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+          <!-- Brand Header -->
+          <div style="background-color: #30206b; padding: 24px 30px; text-align: center; border-bottom: 3px solid #c99736;">
+            <h1 style="margin: 0; color: #ffffff; font-size: 20px; font-weight: 700; letter-spacing: 1px;">SABA AL WADI COUTURE ATELIER</h1>
+            <p style="margin: 4px 0 0 0; color: #c99736; font-size: 11px; letter-spacing: 2px; text-transform: uppercase;">Dubai Luxury Abayas & Modest Wear</p>
+          </div>
+          <!-- Message Content -->
+          <div style="padding: 28px 30px 20px 30px;">
+            ${formattedMessageHtml}
+          </div>
+    `;
+
+    const emailContainerFooter = `
+          <!-- Footer -->
+          <div style="background-color: #f3f4f6; padding: 18px 30px; text-align: center; font-size: 11px; color: #6b7280; border-top: 1px solid #e5e7eb;">
+            <p style="margin: 0 0 4px 0; font-weight: 600; color: #374151;">Saba Al Wadi Couture Atelier LLC</p>
+            <p style="margin: 0;">Dubai, United Arab Emirates • Customer Concierge Support</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    if (mode === 'BODY') {
+      emailBodyHtml = `
+        ${emailContainerHeader}
+        <div style="padding: 0 30px 28px 30px; border-top: 1px solid #f3f4f6;">
+          <div style="margin: 16px 0; font-weight: 700; color: #30206b; font-size: 15px;">Official Invoice Copy</div>
+          ${invoiceHtml}
+        </div>
+        ${emailContainerFooter}
+      `;
+    } else if (mode === 'ATTACHMENT') {
+      emailBodyHtml = `
+        ${emailContainerHeader}
+        <div style="padding: 16px 30px 24px 30px; background-color: #fefce8; border-top: 1px solid #fef08a; border-bottom: 1px solid #fef08a; margin: 0 0 20px 0;">
+          <p style="margin: 0; font-size: 13px; color: #854d0e; font-weight: 500;">
+            📎 Your official tax invoice for Order <strong>#${orderNumber}</strong> is attached to this email as <strong>Invoice-${orderNumber}.html</strong>. You can open and print it in any browser.
+          </p>
+        </div>
+        ${emailContainerFooter}
+      `;
+      attachments.push({
+        filename: `Invoice-${orderNumber}.html`,
+        content: invoiceHtml,
+        contentType: 'text/html',
+      });
+    } else {
+      // BOTH
+      emailBodyHtml = `
+        ${emailContainerHeader}
+        <div style="padding: 14px 30px; background-color: #f8fafc; border-top: 1px solid #e2e8f0; border-bottom: 1px solid #e2e8f0; margin-bottom: 20px;">
+          <p style="margin: 0; font-size: 12px; color: #475569;">
+            📎 An interactive printable copy of your invoice is also attached as <strong>Invoice-${orderNumber}.html</strong>.
+          </p>
+        </div>
+        <div style="padding: 0 30px 28px 30px;">
+          ${invoiceHtml}
+        </div>
+        ${emailContainerFooter}
+      `;
+      attachments.push({
+        filename: `Invoice-${orderNumber}.html`,
+        content: invoiceHtml,
+        contentType: 'text/html',
+      });
+    }
+
+    const result = await this.mailService.dispatchMail({
+      to: recipient,
+      subject,
+      html: emailBodyHtml,
+      text: messageText,
+      attachments,
+    });
+
+    if (!result.success) {
+      throw new BadRequestException(result.error || 'Failed to dispatch invoice email via SMTP');
+    }
+
+    return {
+      success: true,
+      message: `Invoice email successfully sent to ${recipient} (${mode.toLowerCase()} mode)`,
+      recipient,
+      mode,
+    };
+  }
 }

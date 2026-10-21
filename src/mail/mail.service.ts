@@ -159,8 +159,15 @@ export class MailService {
     cc?: string;
     bcc?: string;
     existingLogId?: string;
+    attachments?: Array<{
+      filename: string;
+      content?: string | Buffer;
+      path?: string;
+      contentType?: string;
+      encoding?: string;
+    }>;
   }): Promise<{ success: boolean; error?: string; logId?: string }> {
-    const { to, subject, html, text, cc, bcc, existingLogId } = options;
+    const { to, subject, html, text, cc, bcc, existingLogId, attachments } = options;
     let logRecord: any = null;
 
     try {
@@ -217,6 +224,7 @@ export class MailService {
         subject,
         html,
         text: text || undefined,
+        attachments: attachments || undefined,
       });
 
       this.logger.log(`Email dispatched successfully to ${to} [Subject: "${subject}"]`);

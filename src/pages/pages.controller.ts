@@ -21,6 +21,11 @@ import { AdminGuard } from '../auth/admin.guard';
 export class StorefrontPagesController {
   constructor(private readonly pagesService: PagesService) {}
 
+  @Get()
+  async getPublishedPages() {
+    return this.pagesService.getPublishedPages();
+  }
+
   @Get(':slug')
   async getPageBySlug(@Param('slug') slug: string) {
     return this.pagesService.getPublishedBySlug(slug);
