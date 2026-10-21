@@ -165,6 +165,12 @@ export class OrdersController {
   }
 
   @UseGuards(AdminGuard)
+  @Post('admin/orders/:id/send-tracking-email')
+  sendTrackingEmail(@Param('id') id: string) {
+    return this.ordersService.sendTrackingEmailToCustomer(id);
+  }
+
+  @UseGuards(AdminGuard)
   @Post('admin/orders/manual')
   createManualOrder(@Body() createManualOrderDto: CreateManualOrderDto) {
     return this.ordersService.createManualOrder(createManualOrderDto);

@@ -603,6 +603,53 @@ export class MailService {
     return true;
   }
 
+  async sendTrackingNotificationEmail(
+    email: string,
+    firstName: string,
+    orderNumber: string,
+    deliveryPartner?: string,
+    trackingNumber?: string,
+    trackingUrl?: string,
+    deliveryNotes?: string,
+  ): Promise<boolean> {
+    const subject = `🚚 Shipment Tracking Details: Order #${orderNumber} - Saba Al Wadi`;
+
+    const html = `
+      <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; padding: 30px; background-color: #0c0a09; color: #f5f5f4; border: 1px solid #292524; border-radius: 8px;">
+        <div style="text-align: center; margin-bottom: 25px;">
+          <h1 style="color: #d4af37; margin: 0; font-size: 24px; letter-spacing: 2px;">SABA AL WADI</h1>
+          <p style="color: #a8a29e; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 5px;">Luxury Emirati Abayas</p>
+        </div>
+        <div style="background-color: #1c1917; padding: 25px; border-radius: 6px; border: 1px solid #44403c;">
+          <p style="font-size: 14px; color: #e7e5e4;">Dear ${firstName || 'Valued Customer'},</p>
+          <p style="font-size: 13px; color: #a8a29e; line-height: 1.6;">Great news! Your luxury order <strong>#${orderNumber}</strong> has been assigned tracking details and is on its way to you.</p>
+          
+          <div style="background-color: #27272a; padding: 18px; border-radius: 6px; margin: 20px 0; border: 1px solid #3f3f46;">
+            <h4 style="color: #38bdf8; margin: 0 0 12px 0; font-size: 13px; text-transform: uppercase; letter-spacing: 1px;">Shipment Tracking Information</h4>
+            ${deliveryPartner ? `<p style="margin: 6px 0; font-size: 13px; color: #f4f4f5;"><strong>Delivery Courier:</strong> ${deliveryPartner}</p>` : ''}
+            ${trackingNumber ? `<p style="margin: 6px 0; font-size: 13px; color: #f4f4f5;"><strong>Tracking / AWB Number:</strong> <code style="color: #a7f3d0; background: #064e3b; padding: 3px 8px; border-radius: 4px; font-size: 14px; font-weight: bold;">${trackingNumber}</code></p>` : ''}
+            ${deliveryNotes ? `<p style="margin: 6px 0; font-size: 12px; color: #d4d4d8;"><strong>Special Delivery Instructions:</strong> ${deliveryNotes}</p>` : ''}
+            ${trackingUrl ? `<div style="margin-top: 15px;"><a href="${trackingUrl}" target="_blank" style="display: inline-block; background-color: #0284c7; color: #ffffff; text-decoration: none; font-size: 13px; font-weight: bold; padding: 10px 20px; border-radius: 4px;">Track Shipment Live &rarr;</a></div>` : ''}
+          </div>
+
+          <p style="font-size: 12px; color: #78716c; margin-top: 20px; line-height: 1.5;">Please note that online tracking status updates may take a few hours to reflect in the courier portal. If you need any assistance, our Concierge Support is always available.</p>
+        </div>
+        <div style="text-align: center; margin-top: 25px; font-size: 11px; color: #57534e;">
+          &copy; ${new Date().getFullYear()} Saba Al Wadi Couture LLC. Dubai, United Arab Emirates.
+        </div>
+      </div>
+    `;
+
+    this.logger.log(`\n========================================\n[TRACKING EMAIL TO CUSTOMER] To: ${email} | Order: ${orderNumber} | Courier: ${deliveryPartner || 'N/A'} | Tracking: ${trackingNumber || 'N/A'}\n========================================`);
+
+    await this.dispatchMail({
+      to: email,
+      subject,
+      html,
+    });
+    return true;
+  }
+
   async sendProductStatusUpdateEmail(
     productName: string,
     newStatus: string,

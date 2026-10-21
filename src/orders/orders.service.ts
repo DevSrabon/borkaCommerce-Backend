@@ -1637,23 +1637,67 @@ export class OrdersService implements OnModuleInit {
       include: { items: true, customer: true },
     });
 
-    if (dto.notify_customer && updated.customer && dto.status) {
+    if (dto.notify_customer && updated.customer) {
       try {
-        await this.mailService.sendOrderStatusUpdateEmail(
-          updated.customer.email,
-          updated.customer.first_name,
-          updated.order_number,
-          updated.status,
-          updated.delivery_partner || undefined,
-          updated.tracking_number || undefined,
-          updated.tracking_url || undefined,
-        );
+        if (dto.tracking_number && !dto.status) {
+          // Specifically notify tracking number & courier
+          await this.mailService.sendTrackingNotificationEmail(
+            updated.customer.email,
+            updated.customer.first_name,
+            updated.order_number,
+            updated.delivery_partner || undefined,
+            updated.tracking_number || undefined,
+            updated.tracking_url || undefined,
+            updated.delivery_notes || undefined,
+          );
+        } else if (dto.status) {
+          await this.mailService.sendOrderStatusUpdateEmail(
+            updated.customer.email,
+            updated.customer.first_name,
+            updated.order_number,
+            updated.status,
+            updated.delivery_partner || undefined,
+            updated.tracking_number || undefined,
+            updated.tracking_url || undefined,
+          );
+        }
       } catch (err: any) {
         // non-blocking
       }
     }
 
     return updated;
+  }
+
+  async sendTrackingEmailToCustomer(orderId: string) {
+    const order = await this.prisma.orders.findUnique({
+      where: { id: orderId },
+      include: { customer: true },
+    });
+    if (!order) {
+      throw new NotFoundException(`Order with ID ${orderId} not found`);
+    }
+    if (!order.customer?.email) {
+      throw new BadRequestException('Order does not have a customer email address on file');
+    }
+    if (!order.tracking_number && !order.delivery_partner) {
+      throw new BadRequestException('Please add a tracking number or delivery partner first');
+    }
+
+    const sent = await this.mailService.sendTrackingNotificationEmail(
+      order.customer.email,
+      order.customer.first_name,
+      order.order_number,
+      order.delivery_partner || undefined,
+      order.tracking_number || undefined,
+      order.tracking_url || undefined,
+      order.delivery_notes || undefined,
+    );
+
+    return {
+      success: sent,
+      message: `Tracking details emailed successfully to ${order.customer.email}`,
+    };
   }
 
   async remove(id: string) {
