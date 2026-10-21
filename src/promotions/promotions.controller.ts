@@ -1,7 +1,15 @@
 import { Controller, Get, Post, Patch, Delete, Param, Body, UseGuards, Req, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { PromotionsService } from './promotions.service';
-import { CreateOfferDto, UpdateOfferDto, CreateCouponDto, UpdateCouponDto, ValidateCouponDto } from './dto/promotions.dto';
+import {
+  CreateOfferDto,
+  UpdateOfferDto,
+  CreateCouponDto,
+  UpdateCouponDto,
+  ValidateCouponDto,
+  SendPromotionalEmailDto,
+  UpdatePromoPopupDto,
+} from './dto/promotions.dto';
 import { AdminGuard } from '../auth/admin.guard';
 import { AuthGuard, OptionalAuthGuard } from '../auth/auth.guard';
 
@@ -90,5 +98,42 @@ export class PromotionsController {
   validateCoupon(@Body() validateCouponDto: ValidateCouponDto, @Req() req: any) {
     // Validate coupon and pass customer's ID if authenticated to check per-customer usage limits
     return this.promotionsService.validateCoupon(validateCouponDto, req.user?.id);
+  }
+
+  // --- PROMOTIONAL EMAILS & POPUPS ---
+
+  @UseGuards(AdminGuard)
+  @Get('admin/promotions/recipients-count')
+  getRecipientsCount() {
+    return this.promotionsService.getRecipientsCount();
+  }
+
+  @UseGuards(AdminGuard)
+  @Post('admin/promotions/send-email')
+  sendPromotionalEmail(@Body() dto: SendPromotionalEmailDto) {
+    return this.promotionsService.sendPromotionalEmail(dto);
+  }
+
+  @UseGuards(AdminGuard)
+  @Get('admin/promotions/email-history')
+  getPromotionalEmailHistory() {
+    return this.promotionsService.getPromotionalEmailHistory();
+  }
+
+  @UseGuards(AdminGuard)
+  @Get('admin/promotions/popup')
+  getPromoPopup() {
+    return this.promotionsService.getPromoPopup();
+  }
+
+  @UseGuards(AdminGuard)
+  @Post('admin/promotions/popup')
+  updatePromoPopup(@Body() dto: UpdatePromoPopupDto) {
+    return this.promotionsService.updatePromoPopup(dto);
+  }
+
+  @Get('public/promotions/popup')
+  getPublicPromoPopup() {
+    return this.promotionsService.getPublicPromoPopup();
   }
 }

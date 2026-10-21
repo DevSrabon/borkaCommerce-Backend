@@ -217,3 +217,95 @@ export class UpdateCouponDto {
   @IsOptional()
   status?: boolean;
 }
+
+export class SendPromotionalEmailDto {
+  @IsString()
+  @IsNotEmpty()
+  subject: string;
+
+  @IsString()
+  @IsOptional()
+  headline?: string;
+
+  @IsString()
+  @IsOptional()
+  preheader?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  message: string;
+
+  @IsString()
+  @IsOptional()
+  banner_url?: string;
+
+  @IsString()
+  @IsOptional()
+  coupon_code?: string;
+
+  @IsString()
+  @IsOptional()
+  cta_text?: string;
+
+  @IsString()
+  @IsOptional()
+  cta_url?: string;
+
+  @IsString()
+  @IsOptional()
+  audience?: 'ALL' | 'BUYERS' | 'CUSTOM';
+
+  @IsArray()
+  @IsOptional()
+  custom_emails?: string[];
+
+  @IsArray()
+  @IsOptional()
+  product_ids?: string[];
+
+  @IsBoolean()
+  @IsOptional()
+  test_email_only?: boolean;
+
+  @IsString()
+  @IsOptional()
+  test_recipient?: string;
+}
+
+export class UpdatePromoPopupDto {
+  @IsBoolean()
+  @IsOptional()
+  enabled?: boolean;
+
+  @IsString()
+  @IsOptional()
+  title?: string;
+
+  @IsString()
+  @IsOptional()
+  subtitle?: string;
+
+  @IsString()
+  @IsOptional()
+  coupon_code?: string;
+
+  @IsString()
+  @IsOptional()
+  image_url?: string;
+
+  @IsString()
+  @IsOptional()
+  btn_text?: string;
+
+  @IsString()
+  @IsOptional()
+  btn_url?: string;
+
+  @IsNumber()
+  @IsOptional()
+  delay_seconds?: number;
+
+  @IsString()
+  @IsOptional()
+  frequency?: 'once_per_session' | 'every_page';
+}

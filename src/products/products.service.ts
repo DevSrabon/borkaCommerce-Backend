@@ -58,7 +58,7 @@ export class ProductsService {
           tags: dto.tags,
           status: dto.status || product_status.DRAFT,
           is_featured: dto.is_featured || false,
-          is_cod_allowed: dto.is_cod_allowed !== undefined ? dto.is_cod_allowed : true,
+          is_cod_allowed: dto.is_cod_allowed !== undefined ? dto.is_cod_allowed : false,
         },
       });
 
