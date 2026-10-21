@@ -108,4 +108,16 @@ export class UploadsController {
       url: res.imageUrl,
     };
   }
+
+  @Get('orphan-scan')
+  async scanOrphans(@Query('graceHours') graceHours?: string) {
+    const hours = graceHours ? parseFloat(graceHours) : 2;
+    return this.uploadFilesService.cleanupOrphanFiles(true, hours);
+  }
+
+  @Post('orphan-cleanup')
+  async cleanupOrphans(@Body('graceHours') graceHours?: number) {
+    const hours = typeof graceHours === 'number' ? graceHours : 2;
+    return this.uploadFilesService.cleanupOrphanFiles(false, hours);
+  }
 }

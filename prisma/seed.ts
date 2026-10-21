@@ -501,9 +501,9 @@ async function main() {
   });
 
   // Addresses
-  const srabonAddr = await prisma.customer_addresses.create({
+  const defaultAdminAddr = await prisma.customer_addresses.create({
     data: {
-      customer_id: customerSrabon.id,
+      customer_id: defaultAdmin.id,
       country: 'United Arab Emirates',
       phone: '+971 50 123 4567',
       city: 'Dubai',
@@ -579,7 +579,7 @@ async function main() {
     const order2 = await prisma.orders.create({
       data: {
         order_number: 'BC-2026-1002',
-        customer_id: adminSrabon.id,
+        customer_id: defaultAdmin.id,
         status: 'DELIVERED',
         subtotal: 250.0,
         discount: 50.0, // 20% discount
@@ -644,7 +644,7 @@ async function main() {
     data: [
       {
         product_id: product1.id,
-        customer_id: adminSrabon.id,
+        customer_id: defaultAdmin.id,
         rating: 5,
         review: 'The quality of the Nidha fabric is truly second to none. Extremely lightweight, opaque, and keeps me cool all day. The tailoring is flawless!',
         status: 'APPROVED',

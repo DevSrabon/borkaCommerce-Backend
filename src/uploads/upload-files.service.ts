@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { basename, join, normalize, relative, extname } from 'path';
 import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
@@ -9,7 +9,7 @@ import { PrismaService } from '../database/prisma.service';
 import { SiteSettingsService } from '../site-settings/site-settings.service';
 
 @Injectable()
-export class UploadFilesService {
+export class UploadFilesService implements OnModuleInit {
   private readonly logger = new Logger(UploadFilesService.name);
   private readonly uploadsRoot = join(process.cwd(), 'uploads');
 
@@ -699,6 +699,155 @@ export class UploadFilesService {
       migratedCount,
       errors: errors.slice(0, 5),
       message: `Successfully migrated ${migratedCount} assets to local internal storage. Active driver updated to 'local'.`,
+    };
+  }
+
+  onModuleInit() {
+    // Run automated orphan cleanup once every 24 hours (with a 2-hour grace period)
+    const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+    // Initial delay of 5 minutes after server start
+    setTimeout(() => {
+      this.runAutomatedCleanup();
+      setInterval(() => {
+        this.runAutomatedCleanup();
+      }, TWENTY_FOUR_HOURS);
+    }, 5 * 60 * 1000);
+  }
+
+  private async runAutomatedCleanup() {
+    try {
+      this.logger.log('Starting automated orphan uploads cleanup...');
+      const res = await this.cleanupOrphanFiles(false, 2);
+      this.logger.log(`Automated cleanup done: removed ${res.deletedCount} orphan files, freed ${res.freedFormatted}`);
+    } catch (err: any) {
+      this.logger.error(`Automated orphan cleanup error: ${err.message}`);
+    }
+  }
+
+  /**
+   * Scans uploads folders and removes files that are not referenced anywhere in the database.
+   * Only deletes files older than gracePeriodHours (default: 2 hours) to avoid race conditions.
+   */
+  async cleanupOrphanFiles(dryRun = false, gracePeriodHours = 2) {
+    const folders = [
+      'media', 'product', 'customer', 'banner', 'category', 'blog', 'chat',
+      'product_files', 'product_category', 'banner_files', 'blog_files', 'website_settings_files', 'ecommerce_files'
+    ];
+
+    // 1. Gather all referenced filenames from database
+    const dbFiles = new Set<string>();
+
+    const addReference = (val?: string | null) => {
+      if (!val) return;
+      try {
+        const clean = val.split('?')[0].split('#')[0];
+        const filename = clean.split('/').pop();
+        if (filename && filename.includes('.')) {
+          dbFiles.add(filename.toLowerCase());
+        }
+      } catch (_) {}
+    };
+
+    // Product Images
+    const productImages = await this.prisma.product_images.findMany({ select: { image_url: true } });
+    productImages.forEach(img => addReference(img.image_url));
+
+    // Categories
+    const categories = await this.prisma.categories.findMany({ select: { image: true } });
+    categories.forEach(c => addReference(c.image));
+
+    // Banners
+    const banners = await this.prisma.banners.findMany({ select: { image_url: true } });
+    banners.forEach(b => addReference(b.image_url));
+
+    // Blogs
+    const blogs = await this.prisma.blogs.findMany({ select: { featured_image: true, main_image: true, content: true } });
+    blogs.forEach(b => {
+      addReference(b.featured_image);
+      addReference(b.main_image);
+      if (b.content) {
+        const matches = b.content.match(/[\w-]+\.(webp|jpg|jpeg|png|gif|svg|avif)/gi);
+        if (matches) matches.forEach(m => dbFiles.add(m.toLowerCase()));
+      }
+    });
+
+    // Site Settings
+    const settings = await this.prisma.site_settings.findMany({ select: { value: true } });
+    settings.forEach(s => addReference(s.value));
+
+    // 2. Scan physical uploads folders
+    let scannedCount = 0;
+    let orphanCount = 0;
+    let deletedCount = 0;
+    let freedBytes = 0;
+    const orphanList: Array<{ folder: string; filename: string; size: number; ageHours: number }> = [];
+
+    const now = Date.now();
+    const gracePeriodMs = gracePeriodHours * 60 * 60 * 1000;
+
+    for (const folder of folders) {
+      const folderPath = join(this.uploadsRoot, folder);
+      if (!fsSync.existsSync(folderPath)) continue;
+
+      try {
+        const files = await fs.readdir(folderPath);
+        for (const file of files) {
+          const filePath = join(folderPath, file);
+          const stat = await fs.stat(filePath);
+          if (!stat.isFile()) continue;
+
+          scannedCount++;
+          const filenameLower = file.toLowerCase();
+
+          // If referenced in DB, keep it
+          if (dbFiles.has(filenameLower)) continue;
+
+          // Check age
+          const fileAgeMs = now - stat.mtimeMs;
+          if (fileAgeMs < gracePeriodMs) {
+            // Newer than grace period, keep to avoid race conditions with active form fills
+            continue;
+          }
+
+          orphanCount++;
+          freedBytes += stat.size;
+          orphanList.push({
+            folder,
+            filename: file,
+            size: stat.size,
+            ageHours: Math.round(fileAgeMs / (1000 * 60 * 60)),
+          });
+
+          if (!dryRun) {
+            try {
+              await fs.unlink(filePath);
+              deletedCount++;
+            } catch (err: any) {
+              this.logger.warn(`Failed to delete orphan file ${filePath}: ${err.message}`);
+            }
+          }
+        }
+      } catch (err: any) {
+        this.logger.error(`Error scanning folder ${folder}: ${err.message}`);
+      }
+    }
+
+    const formatBytes = (bytes: number) => {
+      if (bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    };
+
+    return {
+      scannedCount,
+      orphanCount,
+      deletedCount: dryRun ? 0 : deletedCount,
+      freedBytes,
+      freedFormatted: formatBytes(freedBytes),
+      dryRun,
+      orphanSample: orphanList.slice(0, 30),
     };
   }
 }
