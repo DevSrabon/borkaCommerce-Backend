@@ -31,7 +31,12 @@ export class ProductsController {
     const host = req?.get ? (req.get('x-forwarded-host') || req.get('host')) : undefined;
     const proto = req?.get ? (req.get('x-forwarded-proto') || req.protocol || 'https') : 'https';
     const dynamicBase = host ? `${proto}://${host}` : undefined;
-    return await this.uploadFilesService.processUploadedFile('product', file.filename, file.path, dynamicBase);
+    const result = await this.uploadFilesService.processUploadedFile('product', file.filename, file.path, dynamicBase);
+    return {
+      ...result,
+      url: result.imageUrl,
+      image_url: result.imageUrl,
+    };
   }
 
   @UseGuards(AdminGuard)
@@ -66,7 +71,12 @@ export class ProductsController {
     const host = req?.get ? (req.get('x-forwarded-host') || req.get('host')) : undefined;
     const proto = req?.get ? (req.get('x-forwarded-proto') || req.protocol || 'https') : 'https';
     const dynamicBase = host ? `${proto}://${host}` : undefined;
-    return await this.uploadFilesService.processUploadedFile(folder, file.filename, file.path, dynamicBase);
+    const result = await this.uploadFilesService.processUploadedFile(folder, file.filename, file.path, dynamicBase);
+    return {
+      ...result,
+      url: result.imageUrl,
+      image_url: result.imageUrl,
+    };
   }
 
   @UseGuards(AdminGuard)
