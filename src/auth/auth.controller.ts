@@ -124,14 +124,21 @@ export class AuthController {
 
   @UseGuards(AdminGuard)
   @Patch('admin/customers/:id')
-  updateCustomer(@Param('id') id: string, @Body() dto: UpdateCustomerDto) {
-    return this.authService.updateCustomer(id, dto);
+  updateCustomer(
+    @Param('id') id: string,
+    @Body() dto: UpdateCustomerDto,
+    @CurrentUser() currentUser: any,
+  ) {
+    return this.authService.updateCustomer(id, dto, currentUser);
   }
 
   @UseGuards(AdminGuard)
   @Delete('admin/customers/:id')
-  removeCustomer(@Param('id') id: string) {
-    return this.authService.removeCustomer(id);
+  removeCustomer(
+    @Param('id') id: string,
+    @CurrentUser() currentUser: any,
+  ) {
+    return this.authService.removeCustomer(id, currentUser);
   }
 }
 

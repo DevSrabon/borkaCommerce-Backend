@@ -62,6 +62,10 @@ export class CreateAdminDto {
   @IsNotEmpty()
   @MinLength(6, { message: 'Password must be at least 6 characters long' })
   password: string;
+
+  @IsString()
+  @IsOptional()
+  role?: string;
 }
 
 export class UpdateCustomerDto {

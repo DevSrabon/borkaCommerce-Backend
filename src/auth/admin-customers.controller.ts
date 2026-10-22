@@ -3,6 +3,7 @@ import type { Response } from 'express';
 import { AuthService } from './auth.service';
 import { CreateAdminDto, UpdateCustomerDto } from './dto/auth.dto';
 import { AdminGuard } from './admin.guard';
+import { CurrentUser } from './current-user.decorator';
 
 @UseGuards(AdminGuard)
 @Controller('admin/customers')
@@ -25,8 +26,8 @@ export class AdminCustomersController {
   }
 
   @Post('create-admin')
-  createAdmin(@Body() dto: CreateAdminDto) {
-    return this.authService.createAdmin(dto);
+  createAdmin(@Body() dto: CreateAdminDto, @CurrentUser() currentUser: any) {
+    return this.authService.createAdmin(dto, currentUser);
   }
 
   @Get(':id')
@@ -35,12 +36,16 @@ export class AdminCustomersController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateCustomerDto) {
-    return this.authService.updateCustomer(id, dto);
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateCustomerDto,
+    @CurrentUser() currentUser: any,
+  ) {
+    return this.authService.updateCustomer(id, dto, currentUser);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.authService.removeCustomer(id);
+  remove(@Param('id') id: string, @CurrentUser() currentUser: any) {
+    return this.authService.removeCustomer(id, currentUser);
   }
 }

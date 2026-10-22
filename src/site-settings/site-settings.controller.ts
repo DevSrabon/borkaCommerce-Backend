@@ -9,13 +9,15 @@ import {
   Query,
   Res,
   UseGuards,
+  ForbiddenException,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { ModuleRef } from '@nestjs/core';
 import { SiteSettingsService } from './site-settings.service';
 import { RedisService } from '../redis/redis.service';
 import { MailService } from '../mail/mail.service';
-import { AdminGuard } from '../auth/admin.guard';
+import { AdminGuard, isSuperAdminUser } from '../auth/admin.guard';
+import { CurrentUser } from '../auth/current-user.decorator';
 
 // ─── Public Storefront ─────────────────────────────────────────────────────
 
@@ -137,12 +139,31 @@ export class AdminSiteController {
 
   // Site Settings
   @Get('site-settings')
-  getSettings() {
-    return this.svc.getAllSettings();
+  async getSettings(@CurrentUser() user: any) {
+    const settings = await this.svc.getAllSettings();
+    // Only SUPER_ADMIN can view Stripe credentials
+    if (!isSuperAdminUser(user)) {
+      delete settings.STRIPE_SECRET_KEY;
+      delete settings.STRIPE_PUBLISHABLE_KEY;
+      delete settings.STRIPE_WEBHOOK_SECRET;
+    }
+    return settings;
   }
 
   @Patch('site-settings')
-  async updateSettings(@Body() dto: Record<string, string>) {
+  async updateSettings(@Body() dto: Record<string, string>, @CurrentUser() user: any) {
+    // Only SUPER_ADMIN can modify Stripe configuration
+    const stripeKeys = ['STRIPE_SECRET_KEY', 'STRIPE_PUBLISHABLE_KEY', 'STRIPE_WEBHOOK_SECRET', 'stripe_mode'];
+    const hasStripeUpdate = Object.keys(dto).some(
+      (k) => stripeKeys.includes(k) || k.toUpperCase().includes('STRIPE'),
+    );
+
+    if (hasStripeUpdate && !isSuperAdminUser(user)) {
+      throw new ForbiddenException(
+        'Super Admin privilege required: Only a SUPER_ADMIN can view or update Stripe payment gateway settings.',
+      );
+    }
+
     const updated = await this.svc.upsertSettings(dto);
     if ('REDIS_ENABLED' in dto || 'REDIS_URL' in dto) {
       try {

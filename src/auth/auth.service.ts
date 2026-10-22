@@ -1,7 +1,8 @@
-import { Injectable, UnauthorizedException, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { RegisterDto, LoginDto, CreateAdminDto, UpdateCustomerDto, VerifyOtpDto, ResendOtpDto, SocialLoginDto, UpdateProfileDto, ChangePasswordDto, ForgotPasswordDto, ResetPasswordDto } from './dto/auth.dto';
+import { isSuperAdminUser, HARDCODED_SUPER_ADMIN_EMAILS } from './admin.guard';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcryptjs';
 
@@ -503,7 +504,12 @@ export class AuthService {
     };
   }
 
-  async createAdmin(dto: CreateAdminDto) {
+  async createAdmin(dto: CreateAdminDto, currentUser?: any) {
+    const roleToAssign = dto.role || 'ADMIN';
+    if (roleToAssign === 'SUPER_ADMIN' && !isSuperAdminUser(currentUser)) {
+      throw new ForbiddenException('Only a SUPER_ADMIN can create another SUPER_ADMIN.');
+    }
+
     const email = dto.email.trim().toLowerCase();
     const existing = await this.prisma.customers.findUnique({
       where: { email },
@@ -521,7 +527,7 @@ export class AuthService {
         phone: dto.phone,
         password: hashedPassword,
         email_verified: true,
-        role: 'ADMIN',
+        role: roleToAssign,
         is_blocked: false,
       },
     });
@@ -628,12 +634,40 @@ export class AuthService {
     return customerWithoutPassword;
   }
 
-  async updateCustomer(id: string, dto: UpdateCustomerDto) {
+  async updateCustomer(id: string, dto: UpdateCustomerDto, currentUser?: any) {
     const customer = await this.prisma.customers.findUnique({
       where: { id },
     });
     if (!customer) {
       throw new NotFoundException(`Customer with ID ${id} not found`);
+    }
+
+    const isTargetSuperAdmin =
+      customer.role === 'SUPER_ADMIN' ||
+      HARDCODED_SUPER_ADMIN_EMAILS.includes(customer.email.toLowerCase());
+
+    // 1. Only a SUPER_ADMIN can assign or grant the SUPER_ADMIN role
+    if (dto.role === 'SUPER_ADMIN' && !isSuperAdminUser(currentUser)) {
+      throw new ForbiddenException(
+        'Super Admin privilege required: Only a SUPER_ADMIN can assign or grant the SUPER_ADMIN role.',
+      );
+    }
+
+    // 2. Only a SUPER_ADMIN can edit or demote another SUPER_ADMIN
+    if (isTargetSuperAdmin && !isSuperAdminUser(currentUser)) {
+      throw new ForbiddenException(
+        'Super Admin privilege required: Only a SUPER_ADMIN can modify a SUPER_ADMIN account.',
+      );
+    }
+
+    // 3. Prevent self-demotion to avoid accidental lockouts
+    if (
+      currentUser &&
+      currentUser.id === customer.id &&
+      dto.role !== undefined &&
+      dto.role !== 'SUPER_ADMIN'
+    ) {
+      throw new BadRequestException('You cannot demote your own SUPER_ADMIN account.');
     }
 
     const updateData: any = {};
@@ -653,7 +687,12 @@ export class AuthService {
     }
     if (dto.phone !== undefined) updateData.phone = dto.phone;
     if (dto.role !== undefined) updateData.role = dto.role;
-    if (dto.is_blocked !== undefined) updateData.is_blocked = dto.is_blocked;
+    if (dto.is_blocked !== undefined) {
+      if (isTargetSuperAdmin && dto.is_blocked === true) {
+        throw new BadRequestException('Super Admin accounts cannot be suspended or blocked.');
+      }
+      updateData.is_blocked = dto.is_blocked;
+    }
     if (dto.password) updateData.password = this.hashPassword(dto.password);
 
     const updated = await this.prisma.customers.update({
@@ -682,12 +721,26 @@ export class AuthService {
     return updated;
   }
 
-  async removeCustomer(id: string) {
+  async removeCustomer(id: string, currentUser?: any) {
     const customer = await this.prisma.customers.findUnique({
       where: { id },
     });
     if (!customer) {
       throw new NotFoundException(`Customer with ID ${id} not found`);
+    }
+
+    const isTargetSuperAdmin =
+      customer.role === 'SUPER_ADMIN' ||
+      HARDCODED_SUPER_ADMIN_EMAILS.includes(customer.email.toLowerCase());
+
+    if (isTargetSuperAdmin && !isSuperAdminUser(currentUser)) {
+      throw new ForbiddenException(
+        'Super Admin privilege required: Only a SUPER_ADMIN can delete a SUPER_ADMIN account.',
+      );
+    }
+
+    if (currentUser && currentUser.id === customer.id) {
+      throw new BadRequestException('You cannot delete your own SUPER_ADMIN account.');
     }
 
     // Cascade deletes sessions, wishlists, carts, addresses, reviews via prisma schema
