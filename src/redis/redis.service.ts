@@ -196,4 +196,38 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   getClient(): Redis | null {
     return this.client;
   }
+
+  isAvailable(): boolean {
+    return this.isConnected && this.client !== null;
+  }
+
+  async rpush(key: string, value: string): Promise<number | null> {
+    if (!this.isConnected || !this.client) return null;
+    try {
+      return await this.client.rpush(key, value);
+    } catch (err: any) {
+      this.logger.warn(`Redis rpush error on key ${key}: ${err.message}`);
+      return null;
+    }
+  }
+
+  async lpop(key: string): Promise<string | null> {
+    if (!this.isConnected || !this.client) return null;
+    try {
+      return await this.client.lpop(key);
+    } catch (err: any) {
+      this.logger.warn(`Redis lpop error on key ${key}: ${err.message}`);
+      return null;
+    }
+  }
+
+  async llen(key: string): Promise<number> {
+    if (!this.isConnected || !this.client) return 0;
+    try {
+      return await this.client.llen(key);
+    } catch (_) {
+      return 0;
+    }
+  }
 }
+

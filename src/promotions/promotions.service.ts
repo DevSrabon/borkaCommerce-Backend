@@ -477,8 +477,12 @@ export class PromotionsService {
       </div>
     ` : '';
 
-    const siteSetting = await this.prisma.site_settings.findUnique({ where: { key: 'site_name' } });
-    const brandName = siteSetting?.value || 'Saba Al Wadi Couture Atelier';
+    const siteSettings = await this.prisma.site_settings.findMany({
+      where: { key: { in: ['site_name', 'logo_url'] } },
+    });
+    const settingsMap = siteSettings.reduce((acc, s) => ({ ...acc, [s.key]: s.value }), {} as Record<string, string>);
+    const brandName = settingsMap['site_name'] || 'Saba Al Wadi';
+    const logoUrl = settingsMap['logo_url'] || 'https://media.sabaalwadi.com/saba-media/website_settings_files/1777029127576-390261898.png';
 
     let sentCount = 0;
     let failedCount = 0;
@@ -487,9 +491,9 @@ export class PromotionsService {
       const recipientName = recipient.name || 'Valued Patron';
       const emailHtml = `
         <div style="background-color: #f8fafc; font-family: 'Georgia', 'Playfair Display', serif; margin: 0; padding: 25px 10px; color: #1e293b;">
-          <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; padding: 32px 28px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+          <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; padding: 32px 28px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); border: 1px solid #e2e8f0;">
             <div style="text-align: center; border-bottom: 1px solid #f1f5f9; padding-bottom: 20px; margin-bottom: 24px;">
-              <h1 style="color: #b45309; margin: 0; font-size: 20px; letter-spacing: 3px; font-weight: 600; text-transform: uppercase;">${brandName}</h1>
+              <img src="${logoUrl}" alt="${brandName}" style="max-height: 48px; width: auto; max-width: 220px; display: block; margin: 0 auto;" />
             </div>
 
             ${bannerHtml}

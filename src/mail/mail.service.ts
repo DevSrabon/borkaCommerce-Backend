@@ -1,18 +1,149 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import { PrismaService } from '../database/prisma.service';
+import { RedisService } from '../redis/redis.service';
+
+const DEFAULT_LOGO_URL =
+  'https://media.sabaalwadi.com/saba-media/website_settings_files/1777029127576-390261898.png';
+const REDIS_MAIL_QUEUE_KEY = 'borka:mail_queue';
+
+export interface QueuedMailJob {
+  logId?: string;
+  options: {
+    to: string;
+    subject: string;
+    html: string;
+    text?: string;
+    cc?: string;
+    bcc?: string;
+    existingLogId?: string;
+    attachments?: Array<{
+      filename: string;
+      content?: string | Buffer;
+      path?: string;
+      contentType?: string;
+      encoding?: string;
+    }>;
+  };
+  enqueuedAt: string;
+  attempts: number;
+}
 
 @Injectable()
-export class MailService {
+export class MailService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(MailService.name);
+  private queueInterval: NodeJS.Timeout | null = null;
+  private isProcessingQueue = false;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly redisService: RedisService,
+  ) {}
+
+  onModuleInit() {
+    // Start background queue watchdog loop (checks every 2 seconds)
+    this.queueInterval = setInterval(() => {
+      this.processQueue().catch((err) => {
+        this.logger.error(`Error in mail queue watchdog: ${err.message}`);
+      });
+    }, 2000);
+  }
+
+  onModuleDestroy() {
+    if (this.queueInterval) {
+      clearInterval(this.queueInterval);
+      this.queueInterval = null;
+    }
+  }
+
+  private triggerWorker() {
+    setImmediate(() => {
+      this.processQueue().catch((err) => {
+        this.logger.error(`Error in triggered mail worker: ${err.message}`);
+      });
+    });
+  }
+
+  private async processQueue() {
+    if (this.isProcessingQueue) return;
+    if (!this.redisService.isAvailable()) return;
+
+    this.isProcessingQueue = true;
+    try {
+      while (this.redisService.isAvailable()) {
+        const raw = await this.redisService.lpop(REDIS_MAIL_QUEUE_KEY);
+        if (!raw) break; // Queue is drained
+
+        let job: QueuedMailJob;
+        try {
+          job = JSON.parse(raw);
+        } catch (parseErr) {
+          this.logger.error(`Failed to parse queued email job: ${parseErr}`);
+          continue;
+        }
+
+        try {
+          this.logger.log(
+            `[REDIS WORKER] Processing queued mail to ${job.options.to} [Subject: "${job.options.subject}"] (Attempt ${job.attempts})`,
+          );
+
+          let logRecord: any = null;
+          if (job.logId) {
+            try {
+              logRecord = await (this.prisma as any).email_logs.findUnique({
+                where: { id: job.logId },
+              });
+            } catch (_) {}
+          }
+
+          const result = await this.sendDirect(job.options, logRecord);
+
+          if (!result.success) {
+            if (job.attempts < 3) {
+              job.attempts += 1;
+              this.logger.warn(
+                `SMTP send failed for queued mail to ${job.options.to}. Re-queueing (Attempt ${job.attempts}/3)...`,
+              );
+              await this.redisService.rpush(REDIS_MAIL_QUEUE_KEY, JSON.stringify(job));
+              break; // Pause loop briefly on SMTP/network failure
+            } else {
+              this.logger.error(
+                `Queued mail to ${job.options.to} exceeded max attempts (3). Marked as FAILED.`,
+              );
+            }
+          }
+        } catch (jobErr: any) {
+          this.logger.error(
+            `Worker error while processing mail to ${job.options?.to}: ${jobErr.message}`,
+          );
+        }
+      }
+    } catch (loopErr: any) {
+      this.logger.error(`Mail queue worker loop encountered error: ${loopErr.message}`);
+    } finally {
+      this.isProcessingQueue = false;
+    }
+  }
+
+  async getQueueStatus() {
+    const isRedisActive = this.redisService.isAvailable();
+    const queueLength = isRedisActive
+      ? await this.redisService.llen(REDIS_MAIL_QUEUE_KEY)
+      : 0;
+    return {
+      redis_enabled: isRedisActive,
+      queue_length: queueLength,
+      is_processing: this.isProcessingQueue,
+    };
+  }
 
   private async getTransporterAndFrom(): Promise<{
     transporter: nodemailer.Transporter | null;
     from: string;
     adminEmail: string;
     adminEmails: string[];
+    logoUrl: string;
+    siteName: string;
   }> {
     const settings = await this.prisma.site_settings.findMany({
       where: {
@@ -26,13 +157,15 @@ export class MailService {
             'EMAIL_FROM',
             'ADMIN_EMAIL',
             'ADMIN_EMAILS',
+            'logo_url',
+            'site_name',
           ],
         },
       },
     });
     const map = settings.reduce(
       (acc, s) => ({ ...acc, [s.key]: s.value }),
-      {} as Record<string, string>
+      {} as Record<string, string>,
     );
 
     const host = (map['SMTP_HOST'] || process.env.SMTP_HOST || 'smtp.gmail.com').trim();
@@ -45,10 +178,13 @@ export class MailService {
     }
     // Port 465 requires direct SSL/TLS (secure: true). Port 587 uses STARTTLS (secure: false).
     const secure = port === 465 ? true : (map['SMTP_SECURE'] || process.env.SMTP_SECURE) === 'true';
+    const siteName = (map['site_name'] || 'Saba Al Wadi').trim();
+    const logoUrl = (map['logo_url'] || DEFAULT_LOGO_URL).trim();
+
     const from =
       map['EMAIL_FROM'] ||
       process.env.EMAIL_FROM ||
-      'Saba Al Wadi Abayas <no-reply@sabaalwadi.ae>';
+      `${siteName} <no-reply@sabaalwadi.ae>`;
 
     // Prioritize Privileged Admin Emails (ADMIN_EMAILS) from Settings
     const dbAdminEmails = (map['ADMIN_EMAILS'] || '').trim();
@@ -90,12 +226,21 @@ export class MailService {
           auth: { user, pass },
           connectionTimeout: 10000,
         });
-        return { transporter, from, adminEmail, adminEmails };
+        return { transporter, from, adminEmail, adminEmails, logoUrl, siteName };
       } catch (err: any) {
         this.logger.warn(`Failed to create SMTP transporter: ${err.message}`);
       }
     }
-    return { transporter: null, from, adminEmail, adminEmails };
+    return { transporter: null, from, adminEmail, adminEmails, logoUrl, siteName };
+  }
+
+  private getEmailHeader(logoUrl: string, siteName: string = 'Saba Al Wadi', subtitle?: string): string {
+    return `
+      <div style="text-align: center; margin-bottom: 25px; padding-bottom: 15px; border-bottom: 1px solid #292524;">
+        <img src="${logoUrl}" alt="${siteName}" style="max-height: 48px; width: auto; max-width: 220px; display: block; margin: 0 auto;" />
+        ${subtitle ? `<p style="color: #a8a29e; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 8px;">${subtitle}</p>` : ''}
+      </div>
+    `;
   }
 
   async verifySmtp(customConfig?: {
@@ -149,7 +294,7 @@ export class MailService {
     }
   }
 
-  // ─── Central Email Dispatcher with Detailed Logging & Retry ───
+  // ─── Central Email Dispatcher with Redis Queue & Direct Fallback ───
 
   async dispatchMail(options: {
     to: string;
@@ -159,6 +304,7 @@ export class MailService {
     cc?: string;
     bcc?: string;
     existingLogId?: string;
+    direct?: boolean;
     attachments?: Array<{
       filename: string;
       content?: string | Buffer;
@@ -166,8 +312,8 @@ export class MailService {
       contentType?: string;
       encoding?: string;
     }>;
-  }): Promise<{ success: boolean; error?: string; logId?: string }> {
-    const { to, subject, html, text, cc, bcc, existingLogId, attachments } = options;
+  }): Promise<{ success: boolean; queued?: boolean; error?: string; logId?: string }> {
+    const { to, subject, html, text, cc, bcc, existingLogId, direct, attachments } = options;
     let logRecord: any = null;
 
     try {
@@ -199,10 +345,77 @@ export class MailService {
       this.logger.error(`Failed to record email_log in database: ${dbErr.message}`);
     }
 
+    // If Redis is active and not explicitly bypassed, route email through the Redis Queue
+    if (!direct && this.redisService.isAvailable()) {
+      try {
+        if (logRecord?.id) {
+          await (this.prisma as any).email_logs.update({
+            where: { id: logRecord.id },
+            data: { status: 'QUEUED' },
+          });
+        }
+
+        const job: QueuedMailJob = {
+          logId: logRecord?.id,
+          options: {
+            to,
+            subject,
+            html,
+            text,
+            cc,
+            bcc,
+            existingLogId: logRecord?.id,
+            attachments,
+          },
+          enqueuedAt: new Date().toISOString(),
+          attempts: 1,
+        };
+
+        const pushCount = await this.redisService.rpush(
+          REDIS_MAIL_QUEUE_KEY,
+          JSON.stringify(job),
+        );
+
+        if (pushCount !== null) {
+          this.logger.log(
+            `[REDIS MAIL QUEUE] Email to ${to} added to queue [Subject: "${subject}"] (Queue depth: ${pushCount})`,
+          );
+          this.triggerWorker();
+          return { success: true, queued: true, logId: logRecord?.id };
+        }
+
+        this.logger.warn(
+          `Redis rpush returned null. Falling back to direct SMTP delivery for ${to}.`,
+        );
+      } catch (redisErr: any) {
+        this.logger.warn(
+          `Failed to push email to Redis queue (${redisErr.message}). Falling back to direct SMTP delivery.`,
+        );
+      }
+    }
+
+    // Direct synchronous SMTP dispatch (when Redis is disabled or push failed)
+    return await this.sendDirect(options, logRecord);
+  }
+
+  private async sendDirect(
+    options: {
+      to: string;
+      subject: string;
+      html: string;
+      text?: string;
+      cc?: string;
+      bcc?: string;
+      attachments?: any[];
+    },
+    logRecord?: any,
+  ): Promise<{ success: boolean; error?: string; logId?: string }> {
+    const { to, subject, html, text, cc, bcc, attachments } = options;
     const { transporter, from } = await this.getTransporterAndFrom();
 
     if (!transporter) {
-      const errMessage = 'SMTP transporter not configured. Please configure SMTP host, user, and password in Site Settings.';
+      const errMessage =
+        'SMTP transporter not configured. Please configure SMTP host, user, and password in Site Settings.';
       this.logger.warn(`Cannot send email to ${to}: ${errMessage}`);
       if (logRecord?.id) {
         try {
@@ -331,59 +544,56 @@ export class MailService {
     return { success: true, message: 'All email logs cleared successfully.' };
   }
 
+  // ─── Templates (Standardized with dynamic Site Logo & Cleaned Brand Headers) ───
+
   async sendOtpEmail(email: string, otp: string, firstName: string): Promise<boolean> {
-    const subject = `Your Saba Al Wadi Verification Code: ${otp}`;
+    const { logoUrl, siteName } = await this.getTransporterAndFrom();
+    const subject = `Your ${siteName} Verification Code: ${otp}`;
     const html = `
       <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; padding: 30px; background-color: #0c0a09; color: #f5f5f4; border: 1px solid #292524; border-radius: 8px;">
-        <div style="text-align: center; margin-bottom: 25px;">
-          <h1 style="color: #d4af37; margin: 0; font-size: 24px; letter-spacing: 2px;">SABA AL WADI</h1>
-          <p style="color: #a8a29e; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 5px;">Luxury Emirati Abayas</p>
-        </div>
+        ${this.getEmailHeader(logoUrl, siteName)}
         <div style="background-color: #1c1917; padding: 25px; border-radius: 6px; border: 1px solid #44403c;">
           <p style="font-size: 15px; color: #e7e5e4; margin-top: 0;">Dear ${firstName},</p>
-          <p style="font-size: 13px; color: #a8a29e; line-height: 1.6;">Thank you for creating an account with Saba Al Wadi. Please use the following One-Time Password (OTP) to verify your email address and activate your account:</p>
+          <p style="font-size: 13px; color: #a8a29e; line-height: 1.6;">Thank you for creating an account with ${siteName}. Please use the following One-Time Password (OTP) to verify your email address and activate your account:</p>
           <div style="text-align: center; margin: 30px 0;">
             <span style="display: inline-block; font-family: monospace; font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #d4af37; background-color: #0c0a09; padding: 12px 28px; border: 1px dashed #d4af37; border-radius: 4px;">${otp}</span>
           </div>
           <p style="font-size: 12px; color: #78716c; margin-bottom: 0;">This code is valid for <strong>10 minutes</strong>. If you did not request this verification, please disregard this email.</p>
         </div>
         <div style="text-align: center; margin-top: 25px; font-size: 11px; color: #57534e;">
-          &copy; ${new Date().getFullYear()} Saba Al Wadi Couture LLC. Dubai, United Arab Emirates.
+          &copy; ${new Date().getFullYear()} ${siteName}. All rights reserved.
         </div>
       </div>
     `;
 
-    // Always log OTP for development convenience
     this.logger.log(`\n========================================\n[EMAIL OTP] To: ${email} | OTP: ${otp}\n========================================`);
 
     await this.dispatchMail({
       to: email,
       subject,
       html,
-      text: `Your Saba Al Wadi OTP is: ${otp}`,
+      text: `Your ${siteName} OTP is: ${otp}`,
     });
 
     return true;
   }
 
   async sendPasswordResetEmail(email: string, otp: string, firstName: string): Promise<boolean> {
-    const subject = `Password Reset Request - Saba Al Wadi [Code: ${otp}]`;
+    const { logoUrl, siteName } = await this.getTransporterAndFrom();
+    const subject = `Password Reset Request - ${siteName} [Code: ${otp}]`;
     const html = `
       <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; padding: 30px; background-color: #0c0a09; color: #f5f5f4; border: 1px solid #292524; border-radius: 8px;">
-        <div style="text-align: center; margin-bottom: 25px;">
-          <h1 style="color: #d4af37; margin: 0; font-size: 24px; letter-spacing: 2px;">SABA AL WADI</h1>
-          <p style="color: #a8a29e; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 5px;">Password Reset Verification</p>
-        </div>
+        ${this.getEmailHeader(logoUrl, siteName, 'Password Reset Verification')}
         <div style="background-color: #1c1917; padding: 25px; border-radius: 6px; border: 1px solid #44403c;">
           <p style="font-size: 15px; color: #e7e5e4; margin-top: 0;">Dear ${firstName || 'Customer'},</p>
-          <p style="font-size: 13px; color: #a8a29e; line-height: 1.6;">We received a request to reset your Saba Al Wadi account password. Please use the following 6-digit verification code:</p>
+          <p style="font-size: 13px; color: #a8a29e; line-height: 1.6;">We received a request to reset your ${siteName} account password. Please use the following 6-digit verification code:</p>
           <div style="text-align: center; margin: 30px 0;">
             <span style="display: inline-block; font-family: monospace; font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #d4af37; background-color: #0c0a09; padding: 12px 28px; border: 1px dashed #d4af37; border-radius: 4px;">${otp}</span>
           </div>
           <p style="font-size: 12px; color: #78716c; margin-bottom: 0;">This code is valid for <strong>15 minutes</strong>. If you did not request a password reset, you can safely ignore this email; your account remains secure.</p>
         </div>
         <div style="text-align: center; margin-top: 25px; font-size: 11px; color: #57534e;">
-          &copy; ${new Date().getFullYear()} Saba Al Wadi Couture LLC. Dubai, United Arab Emirates.
+          &copy; ${new Date().getFullYear()} ${siteName}. All rights reserved.
         </div>
       </div>
     `;
@@ -394,7 +604,7 @@ export class MailService {
       to: email,
       subject,
       html,
-      text: `Your Saba Al Wadi Password Reset OTP is: ${otp}`,
+      text: `Your ${siteName} Password Reset OTP is: ${otp}`,
     });
 
     return true;
@@ -405,8 +615,8 @@ export class MailService {
     firstName: string,
     order: { order_number: string; total: any; currency?: string; items?: any[]; status?: string },
   ): Promise<boolean> {
-    const { transporter, from } = await this.getTransporterAndFrom();
-    const subject = `Order Confirmed: #${order.order_number} - Saba Al Wadi Luxury Abayas`;
+    const { logoUrl, siteName } = await this.getTransporterAndFrom();
+    const subject = `Order Confirmed: #${order.order_number} - ${siteName}`;
     const currency = order.currency || 'AED';
     const totalFormatted = Number(order.total || 0).toFixed(2);
 
@@ -414,7 +624,7 @@ export class MailService {
       .map(
         (it) => `
         <tr style="border-bottom: 1px solid #292524;">
-          <td style="padding: 10px 0; color: #f5f5f4;">${it.product_name || 'Abaya'} <span style="color: #a8a29e; font-size: 11px;">(${it.variant_name || ''})</span></td>
+          <td style="padding: 10px 0; color: #f5f5f4;">${it.product_name || 'Product'} <span style="color: #a8a29e; font-size: 11px;">(${it.variant_name || ''})</span></td>
           <td style="padding: 10px 0; text-align: center; color: #a8a29e;">x${it.quantity}</td>
           <td style="padding: 10px 0; text-align: right; color: #d4af37; font-weight: bold;">${Number(it.subtotal || it.price || 0).toFixed(2)} ${currency}</td>
         </tr>
@@ -424,10 +634,7 @@ export class MailService {
 
     const html = `
       <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; padding: 30px; background-color: #0c0a09; color: #f5f5f4; border: 1px solid #292524; border-radius: 8px;">
-        <div style="text-align: center; margin-bottom: 25px;">
-          <h1 style="color: #d4af37; margin: 0; font-size: 24px; letter-spacing: 2px;">SABA AL WADI</h1>
-          <p style="color: #a8a29e; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 5px;">Luxury Emirati Abayas</p>
-        </div>
+        ${this.getEmailHeader(logoUrl, siteName)}
         <div style="background-color: #1c1917; padding: 25px; border-radius: 6px; border: 1px solid #44403c;">
           <h2 style="color: #d4af37; margin-top: 0; font-size: 18px;">Thank You for Your Order!</h2>
           <p style="font-size: 14px; color: #e7e5e4;">Dear ${firstName},</p>
@@ -454,7 +661,7 @@ export class MailService {
           <p style="font-size: 12px; color: #78716c; margin-bottom: 0;">We will notify you immediately once your package has shipped via Express courier.</p>
         </div>
         <div style="text-align: center; margin-top: 25px; font-size: 11px; color: #57534e;">
-          &copy; ${new Date().getFullYear()} Saba Al Wadi Couture LLC. Dubai, United Arab Emirates.
+          &copy; ${new Date().getFullYear()} ${siteName}. All rights reserved.
         </div>
       </div>
     `;
@@ -470,7 +677,7 @@ export class MailService {
   }
 
   async sendAdminNewOrderNotification(order: any): Promise<boolean> {
-    const { adminEmail, adminEmails } = await this.getTransporterAndFrom();
+    const { adminEmail, adminEmails, logoUrl, siteName } = await this.getTransporterAndFrom();
     const recipientEmails = adminEmails && adminEmails.length > 0 ? adminEmails : [adminEmail];
     const recipients = recipientEmails.join(', ');
     const subject = `🚨 NEW ORDER RECEIVED: #${order.order_number} - Total ${Number(order.total || 0).toFixed(2)} AED`;
@@ -478,7 +685,10 @@ export class MailService {
 
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 25px; background-color: #18181b; color: #f4f4f5; border: 1px solid #3f3f46; border-radius: 8px;">
-        <h2 style="color: #fbbf24; margin-top: 0;">New Luxury Order Alert!</h2>
+        <div style="text-align: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #3f3f46;">
+          <img src="${logoUrl}" alt="${siteName}" style="max-height: 42px; width: auto; max-width: 180px; display: block; margin: 0 auto;" />
+        </div>
+        <h2 style="color: #fbbf24; margin-top: 0;">New Order Alert!</h2>
         <p style="color: #d4d4d8; font-size: 14px;">A new customer order has been placed on the storefront.</p>
         <div style="background-color: #27272a; padding: 15px; border-radius: 6px; margin: 15px 0;">
           <p style="margin: 5px 0; font-size: 14px;"><strong>Order ID:</strong> #${order.order_number}</p>
@@ -501,16 +711,19 @@ export class MailService {
   }
 
   async sendAdminNewReviewNotification(review: any, product: any): Promise<boolean> {
-    const { adminEmail, adminEmails } = await this.getTransporterAndFrom();
+    const { adminEmail, adminEmails, logoUrl, siteName } = await this.getTransporterAndFrom();
     const recipientEmails = adminEmails && adminEmails.length > 0 ? adminEmails : [adminEmail];
     const recipients = recipientEmails.join(', ');
     const subject = `⭐ NEW PRODUCT REVIEW: ${review.rating}★ for "${product?.name || 'Product'}"`;
 
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 25px; background-color: #18181b; color: #f4f4f5; border: 1px solid #3f3f46; border-radius: 8px;">
+        <div style="text-align: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #3f3f46;">
+          <img src="${logoUrl}" alt="${siteName}" style="max-height: 42px; width: auto; max-width: 180px; display: block; margin: 0 auto;" />
+        </div>
         <h2 style="color: #fbbf24; margin-top: 0;">New Product Review Received!</h2>
         <div style="background-color: #27272a; padding: 15px; border-radius: 6px; margin: 15px 0;">
-          <p style="margin: 5px 0; font-size: 14px;"><strong>Product:</strong> ${product?.name || 'Abaya'}</p>
+          <p style="margin: 5px 0; font-size: 14px;"><strong>Product:</strong> ${product?.name || 'Product'}</p>
           <p style="margin: 5px 0; font-size: 14px;"><strong>Rating:</strong> <span style="color: #fbbf24; font-weight: bold;">${review.rating} / 5 Stars</span></p>
           <p style="margin: 5px 0; font-size: 14px;"><strong>Review:</strong> ${review.review || '(No written review text)'}</p>
         </div>
@@ -529,13 +742,16 @@ export class MailService {
   }
 
   async sendAdminNewBlogCommentNotification(comment: any, blog: any): Promise<boolean> {
-    const { adminEmail, adminEmails } = await this.getTransporterAndFrom();
+    const { adminEmail, adminEmails, logoUrl, siteName } = await this.getTransporterAndFrom();
     const recipientEmails = adminEmails && adminEmails.length > 0 ? adminEmails : [adminEmail];
     const recipients = recipientEmails.join(', ');
     const subject = `💬 NEW BLOG COMMENT: on "${blog?.title || 'Article'}"`;
 
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 25px; background-color: #18181b; color: #f4f4f5; border: 1px solid #3f3f46; border-radius: 8px;">
+        <div style="text-align: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #3f3f46;">
+          <img src="${logoUrl}" alt="${siteName}" style="max-height: 42px; width: auto; max-width: 180px; display: block; margin: 0 auto;" />
+        </div>
         <h2 style="color: #fbbf24; margin-top: 0;">New Blog Comment Received!</h2>
         <div style="background-color: #27272a; padding: 15px; border-radius: 6px; margin: 15px 0;">
           <p style="margin: 5px 0; font-size: 14px;"><strong>Blog Post:</strong> ${blog?.title || 'Article'}</p>
@@ -565,6 +781,7 @@ export class MailService {
     trackingNumber?: string,
     trackingUrl?: string,
   ): Promise<boolean> {
+    const { logoUrl, siteName } = await this.getTransporterAndFrom();
     const subject = `Order Update: #${orderNumber} is now ${newStatus}`;
 
     const trackingHtml = trackingNumber || deliveryPartner ? `
@@ -578,9 +795,7 @@ export class MailService {
 
     const html = `
       <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; padding: 30px; background-color: #0c0a09; color: #f5f5f4; border: 1px solid #292524; border-radius: 8px;">
-        <div style="text-align: center; margin-bottom: 25px;">
-          <h1 style="color: #d4af37; margin: 0; font-size: 24px; letter-spacing: 2px;">SABA AL WADI</h1>
-        </div>
+        ${this.getEmailHeader(logoUrl, siteName)}
         <div style="background-color: #1c1917; padding: 25px; border-radius: 6px; border: 1px solid #44403c;">
           <p style="font-size: 14px; color: #e7e5e4;">Dear ${firstName},</p>
           <p style="font-size: 13px; color: #a8a29e; line-height: 1.6;">Your order <strong>#${orderNumber}</strong> status has been updated to:</p>
@@ -589,6 +804,9 @@ export class MailService {
           </div>
           ${trackingHtml}
           <p style="font-size: 12px; color: #78716c; margin-top: 15px;">If you have any questions, our Concierge Support is always here to assist you.</p>
+        </div>
+        <div style="text-align: center; margin-top: 25px; font-size: 11px; color: #57534e;">
+          &copy; ${new Date().getFullYear()} ${siteName}. All rights reserved.
         </div>
       </div>
     `;
@@ -612,17 +830,15 @@ export class MailService {
     trackingUrl?: string,
     deliveryNotes?: string,
   ): Promise<boolean> {
-    const subject = `🚚 Shipment Tracking Details: Order #${orderNumber} - Saba Al Wadi`;
+    const { logoUrl, siteName } = await this.getTransporterAndFrom();
+    const subject = `🚚 Shipment Tracking Details: Order #${orderNumber} - ${siteName}`;
 
     const html = `
       <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; padding: 30px; background-color: #0c0a09; color: #f5f5f4; border: 1px solid #292524; border-radius: 8px;">
-        <div style="text-align: center; margin-bottom: 25px;">
-          <h1 style="color: #d4af37; margin: 0; font-size: 24px; letter-spacing: 2px;">SABA AL WADI</h1>
-          <p style="color: #a8a29e; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 5px;">Luxury Emirati Abayas</p>
-        </div>
+        ${this.getEmailHeader(logoUrl, siteName)}
         <div style="background-color: #1c1917; padding: 25px; border-radius: 6px; border: 1px solid #44403c;">
           <p style="font-size: 14px; color: #e7e5e4;">Dear ${firstName || 'Valued Customer'},</p>
-          <p style="font-size: 13px; color: #a8a29e; line-height: 1.6;">Great news! Your luxury order <strong>#${orderNumber}</strong> has been assigned tracking details and is on its way to you.</p>
+          <p style="font-size: 13px; color: #a8a29e; line-height: 1.6;">Great news! Your order <strong>#${orderNumber}</strong> has been assigned tracking details and is on its way to you.</p>
           
           <div style="background-color: #27272a; padding: 18px; border-radius: 6px; margin: 20px 0; border: 1px solid #3f3f46;">
             <h4 style="color: #38bdf8; margin: 0 0 12px 0; font-size: 13px; text-transform: uppercase; letter-spacing: 1px;">Shipment Tracking Information</h4>
@@ -635,7 +851,7 @@ export class MailService {
           <p style="font-size: 12px; color: #78716c; margin-top: 20px; line-height: 1.5;">Please note that online tracking status updates may take a few hours to reflect in the courier portal. If you need any assistance, our Concierge Support is always available.</p>
         </div>
         <div style="text-align: center; margin-top: 25px; font-size: 11px; color: #57534e;">
-          &copy; ${new Date().getFullYear()} Saba Al Wadi Couture LLC. Dubai, United Arab Emirates.
+          &copy; ${new Date().getFullYear()} ${siteName}. All rights reserved.
         </div>
       </div>
     `;
@@ -669,7 +885,7 @@ export class MailService {
     message: string,
     attachmentUrl?: string | null,
   ): Promise<boolean> {
-    const { adminEmail, adminEmails } = await this.getTransporterAndFrom();
+    const { adminEmail, adminEmails, logoUrl, siteName } = await this.getTransporterAndFrom();
     const recipientEmails = adminEmails && adminEmails.length > 0 ? adminEmails : [adminEmail];
     const customerDisplayName = session.customer_name || 'Customer';
     const customerEmailStr = session.customer_email || 'Not provided';
@@ -677,6 +893,9 @@ export class MailService {
 
     const html = `
       <div style="font-family: 'Helvetica Neue', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 25px; background-color: #18181b; color: #f4f4f5; border: 1px solid #3f3f46; border-radius: 8px;">
+        <div style="text-align: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #3f3f46;">
+          <img src="${logoUrl}" alt="${siteName}" style="max-height: 42px; width: auto; max-width: 180px; display: block; margin: 0 auto;" />
+        </div>
         <div style="border-bottom: 1px solid #3f3f46; padding-bottom: 12px; margin-bottom: 16px;">
           <h2 style="color: #fbbf24; margin: 0; font-size: 18px;">⚠️ Missed Customer Chat Notification</h2>
           <p style="color: #a1a1aa; font-size: 12px; margin: 4px 0 0 0;">An inquiry was received while all store administrators were inactive / offline.</p>
@@ -722,14 +941,12 @@ export class MailService {
     attachmentUrl?: string | null,
     sessionId?: string,
   ): Promise<boolean> {
-    const subject = `💬 Response to your inquiry - Saba Al Wadi Concierge`;
+    const { logoUrl, siteName } = await this.getTransporterAndFrom();
+    const subject = `💬 Response to your inquiry - ${siteName} Concierge`;
 
     const html = `
       <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; padding: 30px; background-color: #0c0a09; color: #f5f5f4; border: 1px solid #292524; border-radius: 8px;">
-        <div style="text-align: center; margin-bottom: 25px;">
-          <h1 style="color: #d4af37; margin: 0; font-size: 24px; letter-spacing: 2px;">SABA AL WADI</h1>
-          <p style="color: #a8a29e; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 5px;">Luxury Emirati Abayas</p>
-        </div>
+        ${this.getEmailHeader(logoUrl, siteName)}
         <div style="background-color: #1c1917; padding: 25px; border-radius: 6px; border: 1px solid #44403c;">
           <h2 style="color: #d4af37; margin-top: 0; font-size: 16px;">Concierge Consultation Update</h2>
           <p style="font-size: 14px; color: #e7e5e4;">Dear ${customerName || 'Valued Customer'},</p>
@@ -747,7 +964,7 @@ export class MailService {
           <p style="font-size: 11px; color: #78716c; margin-top: 20px; margin-bottom: 0;">You can also simply reply directly to this chat session on our website.</p>
         </div>
         <div style="text-align: center; margin-top: 25px; font-size: 11px; color: #57534e;">
-          &copy; ${new Date().getFullYear()} Saba Al Wadi Couture LLC. Dubai, United Arab Emirates.
+          &copy; ${new Date().getFullYear()} ${siteName}. All rights reserved.
         </div>
       </div>
     `;
@@ -762,4 +979,3 @@ export class MailService {
     return true;
   }
 }
-

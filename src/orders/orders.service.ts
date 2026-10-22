@@ -1247,7 +1247,16 @@ export class OrdersService implements OnModuleInit {
 
     const order = await this.prisma.orders.findUnique({
       where: { id: orderId },
-      include: { customer: true, items: true },
+      include: {
+        customer: true,
+        items: {
+          include: {
+            variant: {
+              include: { product: true },
+            },
+          },
+        },
+      },
     });
 
     if (!order) {
@@ -1260,6 +1269,15 @@ export class OrdersService implements OnModuleInit {
 
     if (order.payment_status === payment_status.PAID) {
       throw new BadRequestException('This order is already paid.');
+    }
+
+    const hasCodDisabledItem = order.items.some(
+      (item) => item.variant?.product?.is_cod_allowed === false,
+    );
+    if (hasCodDisabledItem) {
+      throw new BadRequestException(
+        'Cash on Delivery is unavailable because one or more items in this order require online payment.',
+      );
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {
@@ -2273,6 +2291,9 @@ Dubai, United Arab Emirates`;
     let emailBodyHtml = '';
     const attachments: Array<{ filename: string; content: string; contentType: string }> = [];
 
+    const logoSetting = await this.prisma.site_settings.findUnique({ where: { key: 'logo_url' } });
+    const siteLogoUrl = logoSetting?.value?.trim() || 'https://media.sabaalwadi.com/saba-media/website_settings_files/1777029127576-390261898.png';
+
     const emailContainerHeader = `
       <!DOCTYPE html>
       <html>
@@ -2283,9 +2304,8 @@ Dubai, United Arab Emirates`;
       <body style="margin: 0; padding: 20px; background-color: #f9fafb; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #111827;">
         <div style="max-width: 700px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; border: 1px solid #e5e7eb; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
           <!-- Brand Header -->
-          <div style="background-color: #30206b; padding: 24px 30px; text-align: center; border-bottom: 3px solid #c99736;">
-            <h1 style="margin: 0; color: #ffffff; font-size: 20px; font-weight: 700; letter-spacing: 1px;">SABA AL WADI COUTURE ATELIER</h1>
-            <p style="margin: 4px 0 0 0; color: #c99736; font-size: 11px; letter-spacing: 2px; text-transform: uppercase;">Dubai Luxury Abayas & Modest Wear</p>
+          <div style="background-color: #0c0a09; padding: 24px 30px; text-align: center; border-bottom: 2px solid #292524;">
+            <img src="${siteLogoUrl}" alt="Saba Al Wadi" style="max-height: 48px; width: auto; max-width: 220px; display: block; margin: 0 auto;" />
           </div>
           <!-- Message Content -->
           <div style="padding: 28px 30px 20px 30px;">

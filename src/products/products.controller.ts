@@ -239,4 +239,9 @@ export class ProductsController {
   findOneStorefront(@Param('slug') slug: string) {
     return this.productsService.findOneStorefront(slug);
   }
+
+  @Post('ecommerce/products/check-cod')
+  checkCodAvailability(@Body() body: { variant_ids?: string[]; product_ids?: string[] }) {
+    return this.productsService.checkCodAvailability(body?.variant_ids || [], body?.product_ids || []);
+  }
 }

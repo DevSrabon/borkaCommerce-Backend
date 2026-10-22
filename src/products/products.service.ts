@@ -1091,6 +1091,7 @@ export class ProductsService {
         description: prod.description,
         short_description: prod.short_description,
         is_featured: prod.is_featured,
+        is_cod_allowed: prod.is_cod_allowed,
         thumbnail: prod.images.find((img) => img.is_thumbnail)?.image_url || prod.images[0]?.image_url || null,
         images: prod.images.map((img) => img.image_url),
         image_objects: prod.images.map((img) => ({ image_url: img.image_url, alt_text: (img as any).alt_text })),
@@ -1127,7 +1128,11 @@ export class ProductsService {
 
   async findOneStorefront(slug: string) {
     let product = await this.prisma.products.findFirst({
-      where: { slug, status: product_status.PUBLISHED, deleted_at: null },
+      where: {
+        OR: [{ slug }, { id: slug }],
+        status: product_status.PUBLISHED,
+        deleted_at: null,
+      },
       include: {
         product_categories: {
           include: { category: true },
@@ -1483,6 +1488,7 @@ export class ProductsService {
         description: prod.description,
         short_description: prod.short_description,
         is_featured: prod.is_featured,
+        is_cod_allowed: prod.is_cod_allowed,
         thumbnail: prod.images.find((img) => img.is_thumbnail)?.image_url || prod.images[0]?.image_url || null,
         images: prod.images.map((img) => img.image_url),
         categories: prod.product_categories.map((pc) => ({ id: pc.category.id, name: pc.category.name, slug: pc.category.slug })),
@@ -1511,6 +1517,8 @@ export class ProductsService {
       seo_description: product.seo_description,
       seo_keywords: product.seo_keywords,
       tags: product.tags,
+      is_featured: product.is_featured,
+      is_cod_allowed: product.is_cod_allowed,
       thumbnail: product.images.find((img) => img.is_thumbnail)?.image_url || product.images[0]?.image_url || null,
       images: product.images.map((img) => img.image_url),
       image_objects: product.images.map((img) => ({ image_url: img.image_url, alt_text: (img as any).alt_text })),
@@ -1812,6 +1820,51 @@ export class ProductsService {
       success: true,
       deleted_count: result.count,
       message: `Successfully deleted all ${result.count} dummy products. All real store products are safe.`,
+    };
+  }
+
+  async checkCodAvailability(variantIds: string[], productIds: string[]) {
+    const vIds = Array.isArray(variantIds) ? variantIds.filter(Boolean) : [];
+    const pIds = Array.isArray(productIds) ? productIds.filter(Boolean) : [];
+
+    if (vIds.length === 0 && pIds.length === 0) {
+      return { is_cod_available: true, disallowed_count: 0, disallowed_names: [], item_cod_map: {} };
+    }
+
+    const products = await this.prisma.products.findMany({
+      where: {
+        OR: [
+          ...(pIds.length > 0 ? [{ id: { in: pIds } }] : []),
+          ...(vIds.length > 0 ? [{ variants: { some: { id: { in: vIds } } } }] : []),
+        ],
+        deleted_at: null,
+      },
+      select: {
+        id: true,
+        name: true,
+        is_cod_allowed: true,
+        variants: {
+          where: vIds.length > 0 ? { id: { in: vIds } } : undefined,
+          select: { id: true },
+        },
+      },
+    });
+
+    const disallowed = products.filter((p) => p.is_cod_allowed === false);
+    const itemCodMap: Record<string, boolean> = {};
+
+    products.forEach((p) => {
+      itemCodMap[p.id] = p.is_cod_allowed;
+      p.variants.forEach((v) => {
+        itemCodMap[v.id] = p.is_cod_allowed;
+      });
+    });
+
+    return {
+      is_cod_available: disallowed.length === 0,
+      disallowed_count: disallowed.length,
+      disallowed_names: disallowed.map((p) => p.name),
+      item_cod_map: itemCodMap,
     };
   }
 }
