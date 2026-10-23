@@ -285,7 +285,7 @@ export class SiteSettingsService implements OnModuleInit {
   }
 
   async createBanner(dto: {
-    title: string;
+    title?: string;
     subtitle?: string;
     cta_text?: string;
     cta_link?: string;
@@ -297,7 +297,12 @@ export class SiteSettingsService implements OnModuleInit {
     is_active?: boolean;
     sort_order?: number;
   }) {
-    return this.prisma.banners.create({ data: dto });
+    return this.prisma.banners.create({
+      data: {
+        ...dto,
+        title: dto.title || '',
+      },
+    });
   }
 
   async updateBanner(

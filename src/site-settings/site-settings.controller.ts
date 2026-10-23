@@ -95,7 +95,7 @@ export class AdminSiteController {
   createBanner(
     @Body()
     dto: {
-      title: string;
+      title?: string;
       subtitle?: string;
       cta_text?: string;
       cta_link?: string;
