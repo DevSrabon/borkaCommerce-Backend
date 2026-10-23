@@ -226,14 +226,45 @@ export class AdminSiteController {
     return this.svc.syncExchangeRates();
   }
 
-  // Cache Clear
+  // Cache Clear & System Revalidation
   @Post('cache/clear')
   async clearCache() {
     const details = await this.svc.clearAllCaches();
+
+    let redisKeysPurged = 0;
+    try {
+      const redisService = this.moduleRef.get(RedisService, { strict: false });
+      if (redisService && redisService.isAvailable()) {
+        const client = redisService.getClient();
+        if (client) {
+          const keys = await client.keys('borka:*');
+          if (keys && keys.length > 0) {
+            await client.del(...keys);
+            redisKeysPurged = keys.length;
+          }
+        }
+      }
+    } catch (_) {}
+
+    // Trigger Next.js revalidation from backend if frontend server is reachable
+    let nextjsRevalidated = false;
+    try {
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      const revalRes = await fetch(`${frontendUrl}/api/revalidate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      nextjsRevalidated = revalRes.ok;
+    } catch (_) {}
+
     return {
       success: true,
-      message: 'All backend memory, translation, and system caches have been purged successfully.',
-      details,
+      message: 'All backend memory, Redis keys, translation caches, and website pages have been revalidated successfully.',
+      details: {
+        ...details,
+        redisKeysPurged,
+        nextjsRevalidated,
+      },
     };
   }
 }

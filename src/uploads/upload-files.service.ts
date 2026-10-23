@@ -125,14 +125,16 @@ export class UploadFilesService implements OnModuleInit {
       let pipeline = sharpInstance(localFilePath).rotate();
       const metadata = await pipeline.metadata();
 
+      const maxHeight = Math.round((maxWidth * 4) / 3);
       if (
         maxWidth > 0 &&
         metadata.width &&
-        (metadata.width > maxWidth || (metadata.height && metadata.height > maxWidth))
+        metadata.height &&
+        (metadata.width > maxWidth || metadata.height > maxHeight)
       ) {
         pipeline = pipeline.resize({
           width: maxWidth,
-          height: maxWidth,
+          height: maxHeight,
           fit: 'inside',
           withoutEnlargement: true,
         });
