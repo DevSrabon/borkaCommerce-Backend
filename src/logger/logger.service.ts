@@ -479,77 +479,263 @@ export class LoggerService implements INestLoggerService {
     }
 
     // Determine Entity name
-    let entity = entry.entity || 'SYSTEM';
+    let entity = entry.entity;
     const lowerRoute = route.toLowerCase();
-    if (action === 'LOGIN' || lowerRoute.includes('auth') || lowerRoute.includes('login')) entity = 'AUTH';
-    else if (lowerRoute.includes('blog')) entity = 'BLOG';
-    else if (lowerRoute.includes('product')) entity = 'PRODUCT';
-    else if (lowerRoute.includes('order')) entity = 'ORDER';
-    else if (lowerRoute.includes('categor')) entity = 'CATEGORY';
-    else if (lowerRoute.includes('attribute')) entity = 'ATTRIBUTE';
-    else if (lowerRoute.includes('banner')) entity = 'BANNER';
-    else if (lowerRoute.includes('review')) entity = 'REVIEW';
-    else if (lowerRoute.includes('setting')) entity = 'SETTINGS';
-    else if (lowerRoute.includes('customer')) entity = 'CUSTOMER';
-    else if (lowerRoute.includes('offer') || lowerRoute.includes('campaign') || lowerRoute.includes('coupon')) entity = 'OFFER';
-    else if (lowerRoute.includes('inventory')) entity = 'INVENTORY';
-    else if (lowerRoute.includes('partner') || lowerRoute.includes('courier')) entity = 'DELIVERY_PARTNER';
-    else if (lowerRoute.includes('chat')) entity = 'CHAT';
+
+    if (!entity) {
+      if (lowerRoute.includes('/admin/uploads') || lowerRoute.includes('/admin/media')) entity = 'MEDIA';
+      else if (lowerRoute.includes('/cache') || lowerRoute.includes('clear-cache') || lowerRoute.includes('/cache/clear')) entity = 'SYSTEM';
+      else if (action === 'LOGIN' || lowerRoute.includes('auth') || lowerRoute.includes('login')) entity = 'AUTH';
+      else if (lowerRoute.includes('navbar') || lowerRoute.includes('navmenu')) entity = 'NAVMENU';
+      else if (lowerRoute.includes('blog')) entity = 'BLOG';
+      else if (lowerRoute.includes('product')) entity = 'PRODUCT';
+      else if (lowerRoute.includes('order')) entity = 'ORDER';
+      else if (lowerRoute.includes('categor')) entity = 'CATEGORY';
+      else if (lowerRoute.includes('attribute')) entity = 'ATTRIBUTE';
+      else if (lowerRoute.includes('banner')) entity = 'BANNER';
+      else if (lowerRoute.includes('review')) entity = 'REVIEW';
+      else if (lowerRoute.includes('setting')) entity = 'SETTINGS';
+      else if (lowerRoute.includes('customer')) entity = 'CUSTOMER';
+      else if (lowerRoute.includes('offer') || lowerRoute.includes('campaign') || lowerRoute.includes('coupon')) entity = 'OFFER';
+      else if (lowerRoute.includes('inventory')) entity = 'INVENTORY';
+      else if (lowerRoute.includes('partner') || lowerRoute.includes('courier')) entity = 'DELIVERY_PARTNER';
+      else if (lowerRoute.includes('chat')) entity = 'CHAT';
+      else entity = 'SYSTEM';
+    }
 
     const p = entry.payload && typeof entry.payload === 'object' ? entry.payload : {};
     const userName = entry.userName || (entry.userEmail ? entry.userEmail.split('@')[0].toUpperCase() : 'SABA AL WADI');
 
-    // Generate human-readable details
+    // Extract potential UUID or identifier from route
+    const uuidMatch = route.match(/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/);
+    const entityId = uuidMatch ? uuidMatch[0] : (p.id || undefined);
+
+    // Generate accurate, human-readable details
     let details = entry.details;
     if (!details) {
       if (action === 'LOGIN' || lowerRoute.includes('/login')) {
         details = `Login an Admin user, Name: ${userName}`;
-      } else if (entity === 'BLOG') {
-        if (action === 'CREATE') {
-          details = `Created a Blog: ${p.title || p.name || 'New Best Abaya Shop in Dubai: 7 Magnificent Reasons to Visit Our Shop'}`;
-        } else if (action === 'UPDATE') {
-          details = `Updated a Blog: ${p.title || p.name || 'Blog Post'}`;
-        } else {
-          details = `Deleted a Blog Post`;
+      } else if (entity === 'MEDIA' || lowerRoute.includes('/admin/uploads') || lowerRoute.includes('/admin/media')) {
+        entity = 'MEDIA';
+        action = 'UPLOAD';
+        const folderMatch = route.match(/\/admin\/uploads\/([^/?#]+)/i);
+        const folder = folderMatch ? folderMatch[1] : (p.folder || 'media');
+        const folderTitle = folder.charAt(0).toUpperCase() + folder.slice(1);
+        details = `Uploaded ${folderTitle} Image`;
+      } else if (lowerRoute.includes('/cache/clear') || lowerRoute.includes('/admin/cache')) {
+        entity = 'SYSTEM';
+        action = 'UPDATE';
+        details = 'Purged & Revalidated All System Caches (Storefront & Admin)';
+      } else if (entity === 'BANNER') {
+        let bannerTitle = p.title || p.name;
+        if (!bannerTitle && entityId) {
+          try {
+            const banner = await (this.prisma as any).banners.findUnique({
+              where: { id: entityId },
+              select: { title: true },
+            });
+            if (banner?.title) bannerTitle = banner.title;
+          } catch (_) {}
         }
-      } else if (entity === 'PRODUCT') {
+        const statusSuffix = p.is_active !== undefined ? ` (Status: ${p.is_active ? 'Active' : 'Inactive'})` : '';
         if (action === 'CREATE') {
-          details = `Created a Product: ${p.name || p.title || 'Luxury Abaya Collection'}`;
+          details = `Created a Banner: "${bannerTitle || 'New Banner'}"`;
         } else if (action === 'UPDATE') {
-          details = `Updated a Product: ${p.name || p.title || 'Product Details'}`;
+          details = `Updated a Banner: "${bannerTitle || 'Banner'}"${statusSuffix}`;
         } else {
-          details = `Deleted a Product`;
-        }
-      } else if (entity === 'ORDER') {
-        if (action === 'CREATE') {
-          details = `Created Manual Order${p.order_number ? ' #' + p.order_number : ''}${p.total ? ' (AED ' + p.total + ')' : ''}`;
-        } else if (action === 'UPDATE') {
-          details = `Updated Order${p.order_status ? ': Status -> ' + p.order_status : ''}${p.tracking_number ? ' (AWB: ' + p.tracking_number + ')' : ''}`;
-        } else {
-          details = `Cancelled an Order`;
+          details = `Deleted a Banner${bannerTitle ? `: "${bannerTitle}"` : ''}`;
         }
       } else if (entity === 'CATEGORY') {
-        if (action === 'CREATE') {
-          details = `Created Category: ${p.name || 'New Category'}`;
-        } else if (action === 'UPDATE') {
-          details = `Updated Category: ${p.name || 'Category'}`;
-        } else {
-          details = `Deleted Category`;
+        let catName = p.name || p.title;
+        if (!catName && entityId) {
+          try {
+            const cat = await (this.prisma as any).categories.findUnique({
+              where: { id: entityId },
+              select: { name: true },
+            });
+            if (cat?.name) catName = cat.name;
+          } catch (_) {}
         }
-      } else if (entity === 'BANNER') {
         if (action === 'CREATE') {
-          details = `Created a Banner: ${p.title || 'New Banner'}`;
+          details = `Created Category: "${catName || 'New Category'}"`;
         } else if (action === 'UPDATE') {
-          details = `Updated a Banner: ${p.title || 'Banner'}`;
+          details = `Updated Category: "${catName || 'Category'}"`;
         } else {
-          details = `Deleted a Banner`;
+          details = `Deleted Category${catName ? `: "${catName}"` : ''}`;
+        }
+      } else if (entity === 'OFFER') {
+        let offerName = p.name || p.title || p.code;
+        if (!offerName && entityId) {
+          try {
+            const off = await (this.prisma as any).offers.findUnique({
+              where: { id: entityId },
+              select: { name: true },
+            });
+            if (off?.name) {
+              offerName = off.name;
+            } else {
+              const cpn = await (this.prisma as any).coupons.findUnique({
+                where: { id: entityId },
+                select: { code: true },
+              });
+              if (cpn?.code) offerName = cpn.code;
+            }
+          } catch (_) {}
+        }
+        const statusSuffix = p.status ? ` (Status: ${p.status})` : '';
+        if (action === 'CREATE') {
+          details = `Created Promotion Offer: "${offerName || 'New Offer'}"`;
+        } else if (action === 'UPDATE') {
+          details = `Updated Promotion Offer: "${offerName || 'Offer'}"${statusSuffix}`;
+        } else {
+          details = `Deleted Promotion Offer${offerName ? `: "${offerName}"` : ''}`;
+        }
+      } else if (entity === 'ATTRIBUTE') {
+        if (lowerRoute.includes('/values/')) {
+          const valueId = lowerRoute.split('/values/')[1]?.split('/')[0]?.split('?')[0];
+          let valStr = p.value || '';
+          let attrName = '';
+          if (valueId) {
+            try {
+              const valRec = await (this.prisma as any).attribute_values.findUnique({
+                where: { id: valueId },
+                include: { attribute: { select: { name: true } } },
+              });
+              if (valRec) {
+                valStr = valRec.value || valStr;
+                attrName = valRec.attribute?.name || '';
+              }
+            } catch (_) {}
+          }
+          if (action === 'DELETE') {
+            details = `Deleted Attribute Value: "${valStr || valueId}"${attrName ? ` for ${attrName}` : ''}`;
+          } else {
+            details = `Updated Attribute Value: "${valStr || valueId}"${attrName ? ` (${attrName})` : ''}`;
+          }
+        } else if (lowerRoute.includes('/values')) {
+          let attrName = '';
+          if (entityId) {
+            try {
+              const attr = await (this.prisma as any).attributes.findUnique({
+                where: { id: entityId },
+                select: { name: true },
+              });
+              if (attr?.name) attrName = attr.name;
+            } catch (_) {}
+          }
+          details = `Added Value "${p.value || ''}" to Attribute: "${attrName || 'Attribute'}"`;
+        } else {
+          let attrName = p.name;
+          if (!attrName && entityId) {
+            try {
+              const attr = await (this.prisma as any).attributes.findUnique({
+                where: { id: entityId },
+                select: { name: true },
+              });
+              if (attr?.name) attrName = attr.name;
+            } catch (_) {}
+          }
+          if (action === 'CREATE') {
+            details = `Created Attribute: "${attrName || 'New Attribute'}"`;
+          } else if (action === 'UPDATE') {
+            details = `Updated Attribute: "${attrName || 'Attribute'}"`;
+          } else {
+            details = `Deleted Attribute${attrName ? `: "${attrName}"` : ''}`;
+          }
+        }
+      } else if (entity === 'ORDER') {
+        let orderNumber = p.order_number;
+        let currentStatus = p.status || p.order_status;
+        if (!orderNumber && entityId) {
+          try {
+            const ord = await (this.prisma as any).orders.findUnique({
+              where: { id: entityId },
+              select: { order_number: true, status: true, total: true },
+            });
+            if (ord) {
+              orderNumber = ord.order_number;
+              if (!currentStatus) currentStatus = ord.status;
+            }
+          } catch (_) {}
+        }
+        if (lowerRoute.includes('cancel')) {
+          details = `Cancelled Order #${orderNumber || entityId || ''}`;
+        } else if (lowerRoute.includes('status') || currentStatus) {
+          details = `Updated Order #${orderNumber || entityId || ''} (Status: ${currentStatus})`;
+        } else if (action === 'CREATE') {
+          details = `Created Manual Order #${orderNumber || ''}${p.total ? ` (AED ${p.total})` : ''}`;
+        } else if (action === 'UPDATE') {
+          details = `Updated Order #${orderNumber || entityId || ''}${p.tracking_number ? ` (AWB: ${p.tracking_number})` : ''}`;
+        } else {
+          details = `Deleted Order #${orderNumber || entityId || ''}`;
+        }
+      } else if (entity === 'BLOG') {
+        let blogTitle = p.title || p.name;
+        if (!blogTitle && entityId) {
+          try {
+            const blg = await (this.prisma as any).blogs.findUnique({
+              where: { id: entityId },
+              select: { title: true },
+            });
+            if (blg?.title) blogTitle = blg.title;
+          } catch (_) {}
+        }
+        if (action === 'CREATE') {
+          details = `Created a Blog: "${blogTitle || 'New Blog Post'}"`;
+        } else if (action === 'UPDATE') {
+          details = `Updated a Blog: "${blogTitle || 'Blog Post'}"`;
+        } else {
+          details = `Deleted a Blog Post${blogTitle ? `: "${blogTitle}"` : ''}`;
+        }
+      } else if (entity === 'NAVMENU') {
+        if (lowerRoute.includes('reorder')) {
+          action = 'UPDATE';
+          details = 'Reordered Navbar Navigation Menu Items';
+        } else if (lowerRoute.includes('seed-defaults')) {
+          action = 'UPDATE';
+          details = 'Reset Navbar Navigation Menu to System Defaults';
+        } else {
+          let navName = p.name || p.label || p.title;
+          if (!navName && entityId) {
+            try {
+              const nav = await (this.prisma as any).navbar_items.findUnique({
+                where: { id: entityId },
+                select: { name: true },
+              });
+              if (nav?.name) navName = nav.name;
+            } catch (_) {}
+          }
+          const statusSuffix = p.is_active !== undefined ? ` (Status: ${p.is_active ? 'Active' : 'Inactive'})` : '';
+          if (action === 'CREATE') {
+            details = `Created NavMenu Item: "${navName || 'New Menu Item'}"`;
+          } else if (action === 'UPDATE') {
+            details = `Updated NavMenu Item: "${navName || 'Menu Item'}"${statusSuffix}`;
+          } else {
+            details = `Deleted NavMenu Item${navName ? `: "${navName}"` : ''}`;
+          }
+        }
+      } else if (entity === 'PRODUCT') {
+        let prodName = p.name || p.title;
+        if (!prodName && entityId) {
+          try {
+            const prod = await (this.prisma as any).products.findUnique({
+              where: { id: entityId },
+              select: { name: true },
+            });
+            if (prod?.name) prodName = prod.name;
+          } catch (_) {}
+        }
+        if (action === 'CREATE') {
+          details = `Created a Product: "${prodName || 'New Product'}"`;
+        } else if (action === 'UPDATE') {
+          details = `Updated a Product: "${prodName || 'Product'}"`;
+        } else {
+          details = `Deleted a Product${prodName ? `: "${prodName}"` : ''}`;
         }
       } else if (entity === 'SETTINGS') {
         details = `Updated Site Settings: ${p.key || (Object.keys(p).length > 0 ? Object.keys(p).slice(0, 3).join(', ') : 'Site Configuration')}`;
       } else if (entity === 'CUSTOMER') {
         details = `${action === 'CREATE' ? 'Created' : 'Updated'} Customer: ${p.first_name ? p.first_name + ' ' + (p.last_name || '') : (p.email || 'Customer Profile')}`;
-      } else if (entity === 'OFFER') {
-        details = `${action === 'CREATE' ? 'Created' : 'Updated'} Promotion: ${p.code || p.name || 'Discount Offer'}`;
       } else if (entity === 'DELIVERY_PARTNER') {
         details = `${action === 'CREATE' ? 'Created' : 'Updated'} Delivery Partner: ${p.name || 'Partner'}`;
       } else {
@@ -631,6 +817,66 @@ export class LoggerService implements INestLoggerService {
       }),
       (this.prisma as any).audit_logs.count({ where }),
     ]);
+
+    // Live enrich and sanitize older or generic audit log details
+    await Promise.all(
+      items.map(async (item: any) => {
+        try {
+          let updated = false;
+          const r = (item.route || '').toLowerCase();
+          const d = (item.details || '').trim();
+
+          if (r.includes('/cache/clear') && (d === 'Updated System' || !d)) {
+            item.details = 'Purged & Revalidated All System Caches (Storefront & Admin)';
+            item.entity = 'SYSTEM';
+            updated = true;
+          } else if (r.includes('/admin/uploads/banner') && (d.includes('Banner: New Banner') || !d)) {
+            item.details = 'Uploaded Banner Image';
+            item.entity = 'MEDIA';
+            updated = true;
+          } else if (r.includes('/admin/uploads/') && (!d || d.includes('New '))) {
+            const folder = r.split('/admin/uploads/')[1]?.split('?')[0];
+            item.details = `Uploaded ${folder ? folder.charAt(0).toUpperCase() + folder.slice(1) : 'Media'} Image`;
+            item.entity = 'MEDIA';
+            updated = true;
+          } else if (
+            r.includes('/admin/banners/') &&
+            (d === 'Updated a Banner: Banner' || d === 'Updated a Banner: New Banner' || d === 'Updated a Banner: Discount' || d === 'Banner')
+          ) {
+            const id = item.route.match(/[0-9a-fA-F-]{36}/)?.[0];
+            if (id) {
+              const b = await (this.prisma as any).banners.findUnique({
+                where: { id },
+                select: { title: true },
+              });
+              if (b?.title && b.title !== 'Banner') {
+                item.details = `Updated a Banner: "${b.title}"`;
+                updated = true;
+              }
+            }
+          } else if (r.includes('/admin/categories/') && d.includes('Category: Category')) {
+            const id = item.route.match(/[0-9a-fA-F-]{36}/)?.[0];
+            if (id) {
+              const c = await (this.prisma as any).categories.findUnique({
+                where: { id },
+                select: { name: true },
+              });
+              if (c?.name) {
+                item.details = `Updated Category: "${c.name}"`;
+                updated = true;
+              }
+            }
+          }
+
+          if (updated) {
+            (this.prisma as any).audit_logs.update({
+              where: { id: item.id },
+              data: { details: item.details, entity: item.entity },
+            }).catch(() => {});
+          }
+        } catch (_) {}
+      })
+    );
 
     return {
       items,
