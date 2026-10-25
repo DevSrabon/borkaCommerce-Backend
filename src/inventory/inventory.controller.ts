@@ -45,8 +45,28 @@ export class InventoryController {
   }
 
   @Get('inventory')
-  getInventoryStatus() {
-    return this.inventoryService.getInventoryStatus();
+  async getInventoryStatus(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('skip') skip?: string,
+    @Query('search') search?: string,
+    @Query('status') status?: string,
+    @Res({ passthrough: true }) res?: Response,
+  ) {
+    const pageNum = page ? Math.max(1, parseInt(page, 10)) : 1;
+    const limitNum = limit ? (limit === 'all' ? 0 : parseInt(limit, 10)) : 25;
+    const skipNum = skip ? parseInt(skip, 10) : undefined;
+    const result = await this.inventoryService.getInventoryStatus({
+      page: pageNum,
+      limit: limitNum,
+      skip: skipNum,
+      search,
+      status,
+    });
+    if (res) {
+      res.setHeader('x-total-count', result.total.toString());
+    }
+    return result;
   }
 
   @Get('inventory/transactions')

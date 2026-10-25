@@ -250,33 +250,87 @@ export class InventoryService {
     };
   }
 
-  async getInventoryStatus() {
-    const records = await this.prisma.inventory.findMany({
-      include: {
-        variant: {
-          include: {
-            product: {
-              include: {
-                images: true,
+  async getInventoryStatus(params?: {
+    page?: number;
+    limit?: number;
+    skip?: number;
+    search?: string;
+    status?: string;
+  }) {
+    const page = params?.page && params.page > 0 ? Number(params.page) : 1;
+    const limit = params?.limit !== undefined ? Number(params.limit) : 25;
+    const isAll = limit <= 0;
+    const take = isAll ? undefined : (limit > 0 ? limit : 25);
+    const skip = params?.skip !== undefined ? Number(params.skip) : (isAll ? undefined : (page - 1) * (take || 25));
+
+    const where: any = {};
+
+    const status = params?.status?.toUpperCase();
+    if (status === 'IN_STOCK') {
+      where.available_quantity = { gt: 5 };
+    } else if (status === 'LOW_STOCK') {
+      where.available_quantity = { gt: 0, lte: 5 };
+    } else if (status === 'OUT_OF_STOCK') {
+      where.available_quantity = { lte: 0 };
+    }
+
+    if (params?.search && params.search.trim()) {
+      const q = params.search.trim();
+      where.OR = [
+        { variant: { sku: { contains: q, mode: 'insensitive' } } },
+        { variant: { product: { name: { contains: q, mode: 'insensitive' } } } },
+        { variant: { attributes: { some: { attribute_value: { value: { contains: q, mode: 'insensitive' } } } } } },
+      ];
+    }
+
+    const [records, total, countsRaw] = await Promise.all([
+      this.prisma.inventory.findMany({
+        where,
+        take,
+        skip,
+        include: {
+          variant: {
+            include: {
+              product: {
+                include: {
+                  images: {
+                    select: {
+                      id: true,
+                      image_url: true,
+                      is_thumbnail: true,
+                    },
+                  },
+                },
               },
-            },
-            attributes: {
-              include: {
-                attribute_value: {
-                  include: {
-                    attribute: true,
+              attributes: {
+                include: {
+                  attribute_value: {
+                    include: {
+                      attribute: true,
+                    },
                   },
                 },
               },
             },
           },
+          warehouse: true,
         },
-        warehouse: true,
-      },
-      orderBy: { updated_at: 'desc' },
-    });
+        orderBy: { updated_at: 'desc' },
+      }),
+      this.prisma.inventory.count({ where }),
+      this.prisma
+        .$queryRawUnsafe<any[]>(
+          `SELECT 
+            COUNT(*)::int as all_count, 
+            COUNT(CASE WHEN available_quantity > 5 THEN 1 END)::int as in_stock, 
+            COUNT(CASE WHEN available_quantity > 0 AND available_quantity <= 5 THEN 1 END)::int as low_stock, 
+            COUNT(CASE WHEN available_quantity <= 0 THEN 1 END)::int as out_of_stock 
+          FROM inventory`,
+        )
+        .catch(() => [{ all_count: 0, in_stock: 0, low_stock: 0, out_of_stock: 0 }]),
+    ]);
 
-    return records.map((r) => {
+    const items = records.map((r) => {
       const thumb =
         r.variant?.product?.images?.find((img) => img.is_thumbnail)?.image_url ||
         r.variant?.product?.images?.[0]?.image_url ||
@@ -295,6 +349,22 @@ export class InventoryService {
         },
       };
     });
+
+    const counts = {
+      all: countsRaw[0]?.all_count ?? total,
+      in_stock: countsRaw[0]?.in_stock ?? 0,
+      low_stock: countsRaw[0]?.low_stock ?? 0,
+      out_of_stock: countsRaw[0]?.out_of_stock ?? 0,
+    };
+
+    return {
+      items,
+      total,
+      page,
+      limit: take || total,
+      totalPages: take ? Math.max(1, Math.ceil(total / take)) : 1,
+      counts,
+    };
   }
 
   async getTransactions(variantId?: string, limit = 50, skip = 0) {

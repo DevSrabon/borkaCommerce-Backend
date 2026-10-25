@@ -32,6 +32,7 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   }
 
   private activityCallbacks: ((sessionId: string) => void)[] = [];
+  private adminActivityCallbacks: (() => void)[] = [];
 
   onCustomerActivity(cb: (sessionId: string) => void) {
     this.activityCallbacks.push(cb);
@@ -46,11 +47,37 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     }
   }
 
+  onAdminActivity(cb: () => void) {
+    this.adminActivityCallbacks.push(cb);
+  }
+
+  notifyAdminActivity() {
+    for (const cb of this.adminActivityCallbacks) {
+      try {
+        cb();
+      } catch (_) {}
+    }
+  }
+
+  getConnectedAdminCount(): number {
+    try {
+      const room = this.server?.sockets?.adapter?.rooms?.get('admin');
+      return room ? room.size : 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  hasConnectedAdmin(): boolean {
+    return this.getConnectedAdminCount() > 0;
+  }
+
   // Admin joins global administrative room
   @SubscribeMessage('join_admin')
   handleJoinAdmin(@ConnectedSocket() client: Socket) {
     client.join('admin');
-    this.logger.log(`[Socket.IO] Client ${client.id} joined admin room`);
+    this.notifyAdminActivity();
+    this.logger.log(`[Socket.IO] Client ${client.id} joined admin room (Active admins: ${this.getConnectedAdminCount()})`);
     return { status: 'joined_admin' };
   }
 

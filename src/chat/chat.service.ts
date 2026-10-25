@@ -38,10 +38,13 @@ export class ChatService {
     this.realtimeGateway.onCustomerActivity((sessionId) => {
       this.recordCustomerActivity(sessionId);
     });
+    this.realtimeGateway.onAdminActivity(() => {
+      this.recordAdminActivity();
+    });
   }
 
   /**
-   * Record admin presence (polled unread count, opened sessions, replied, or typed)
+   * Record admin presence (opened sessions, replied, or typed)
    */
   recordAdminActivity() {
     this.lastAdminActivityTimestamp = Date.now();
@@ -49,9 +52,17 @@ export class ChatService {
 
   /**
    * Check if all store administrators are currently inactive/offline
-   * Considers admins inactive if no admin activity was detected in the last 60 seconds
+   * Considers admins inactive/offline if:
+   * 1. No admin socket is connected to the real-time admin room (offline), OR
+   * 2. No human admin activity (reply, typing, read, session view) in the last 60 seconds
    */
   isAdminInactive(): boolean {
+    // If no admin is connected via Socket.IO, they are completely offline
+    if (!this.realtimeGateway.hasConnectedAdmin()) {
+      return true;
+    }
+
+    // If an admin has a tab open, check if they have been active in the last 60 seconds
     if (!this.lastAdminActivityTimestamp) return true;
     return Date.now() - this.lastAdminActivityTimestamp > 60000;
   }
@@ -340,12 +351,20 @@ export class ChatService {
           customer_name: session?.customer_name || senderName || 'Customer',
           customer_email: session?.customer_email || null,
         };
+        this.logger.log(
+          `[CHAT OFFLINE ALERT] Store admin is offline/inactive. Dispatching email alert for session: ${sessionId}`,
+        );
         this.mailService
           .sendCustomerChatMissedEmail(
             sessionPayload,
             (message || '').trim(),
             attachmentUrl,
           )
+          .then(() => {
+            this.logger.log(
+              `[CHAT OFFLINE ALERT] Successfully sent missed chat email for session: ${sessionId}`,
+            );
+          })
           .catch((err) =>
             this.logger.warn(`Failed to send missed chat notification email: ${err.message}`),
           );
@@ -355,7 +374,7 @@ export class ChatService {
       const lastNotified = this.sessionLastInactiveNoticeMap.get(sessionId) || 0;
       if (Date.now() - lastNotified > 15 * 60 * 1000) {
         this.sessionLastInactiveNoticeMap.set(sessionId, Date.now());
-        await this.prisma.chat_messages.create({
+        const botNotice = await this.prisma.chat_messages.create({
           data: {
             session_id: sessionId,
             sender_type: 'BOT',
@@ -364,6 +383,7 @@ export class ChatService {
               'Our styling consultants are currently away. We have dispatched your message to management via email and will reply shortly.',
           },
         });
+        this.realtimeGateway.emitChatMessage(sessionId, botNotice);
       }
     }
 
@@ -538,7 +558,6 @@ export class ChatService {
    * Admin: get total unread count across all sessions
    */
   async getAdminUnreadTotal() {
-    this.recordAdminActivity();
     const aggregate = await this.prisma.chat_sessions.aggregate({
       _sum: {
         unread_admin_count: true,

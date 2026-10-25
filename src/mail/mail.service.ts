@@ -915,7 +915,7 @@ export class MailService implements OnModuleInit, OnModuleDestroy {
         </div>
 
         <div style="text-align: center; margin-top: 20px;">
-          <a href="http://localhost:3000/admin/chat?session=${session.session_id}" style="display: inline-block; background-color: #d4af37; color: #000000; font-weight: bold; text-decoration: none; padding: 10px 24px; border-radius: 6px; font-size: 13px;">Open Admin Live Chat &rarr;</a>
+          <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/admin/chat?session=${session.session_id}" style="display: inline-block; background-color: #d4af37; color: #000000; font-weight: bold; text-decoration: none; padding: 10px 24px; border-radius: 6px; font-size: 13px;">Open Admin Live Chat &rarr;</a>
         </div>
 
         <p style="font-size: 11px; color: #71717a; text-align: center; margin-top: 20px; margin-bottom: 0;">
