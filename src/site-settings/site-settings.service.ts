@@ -50,9 +50,9 @@ export class SiteSettingsService implements OnModuleInit {
 
     // Cloudflare Turnstile Captcha
     CLOUDFLARE_TURNSTILE_SITE_KEY:
-      process.env.CLOUDFLARE_TURNSTILE_SITE_KEY || '1x00000000000000000000AA',
+      process.env.CLOUDFLARE_TURNSTILE_SITE_KEY || '',
     CLOUDFLARE_TURNSTILE_SECRET_KEY:
-      process.env.CLOUDFLARE_TURNSTILE_SECRET_KEY || '1x0000000000000000000000000000000AA',
+      process.env.CLOUDFLARE_TURNSTILE_SECRET_KEY || '',
     ADMIN_EMAIL: process.env.ADMIN_EMAIL || '',
 
     // Dynamic Delivery & Shipping Configuration

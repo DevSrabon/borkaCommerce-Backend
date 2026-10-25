@@ -1,12 +1,12 @@
-import { Injectable, NotFoundException, BadRequestException, Logger, OnModuleInit } from '@nestjs/common';
-import { PrismaService } from '../database/prisma.service';
+import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PromotionsService } from '../promotions/promotions.service';
+import { inventory_transaction_type, offer_status, order_status, payment_method, payment_status } from '@prisma/client';
+import Stripe from 'stripe';
+import { PrismaService } from '../database/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { CheckoutDto, UpdateOrderStatusDto, CreateManualOrderDto, UpdateOrderItemsDto, UpdateOrderAddressDto } from './dto/orders.dto';
-import { order_status, payment_status, payment_method, inventory_transaction_type, offer_status } from '@prisma/client';
-import Stripe from 'stripe';
+import { PromotionsService } from '../promotions/promotions.service';
+import { CheckoutDto, CreateManualOrderDto, UpdateOrderAddressDto, UpdateOrderItemsDto, UpdateOrderStatusDto } from './dto/orders.dto';
 
 import { SiteSettingsService } from '../site-settings/site-settings.service';
 
@@ -2046,9 +2046,7 @@ export class OrdersService implements OnModuleInit {
     if (dto.city !== undefined) dataToUpdate.shipping_city = dto.city?.trim() || null;
     if (dto.postal_code !== undefined) dataToUpdate.shipping_postal_code = dto.postal_code?.trim() || null;
     const resolvedFullAddress = dto.full_address !== undefined
-      ? dto.full_address?.trim() || null
-      : dto.street !== undefined
-      ? dto.street?.trim() || null
+      ? dto.full_address?.trim()
       : undefined;
     if (resolvedFullAddress !== undefined) {
       dataToUpdate.shipping_full_address = resolvedFullAddress;
@@ -2096,9 +2094,7 @@ export class OrdersService implements OnModuleInit {
     if (dto.city !== undefined) dataToUpdate.shipping_city = dto.city?.trim() || null;
     if (dto.postal_code !== undefined) dataToUpdate.shipping_postal_code = dto.postal_code?.trim() || null;
     const resolvedFullAddress = dto.full_address !== undefined
-      ? dto.full_address?.trim() || null
-      : dto.street !== undefined
-      ? dto.street?.trim() || null
+      ? dto.full_address?.trim()
       : undefined;
     if (resolvedFullAddress !== undefined) {
       dataToUpdate.shipping_full_address = resolvedFullAddress;

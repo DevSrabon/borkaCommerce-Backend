@@ -89,6 +89,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
           formattedMessage === 'Not Found')
       ) {
         formattedMessage = 'Can not find the route';
+      } else if (status === HttpStatus.TOO_MANY_REQUESTS) {
+        formattedMessage = 'Too many requests. Please slow down and try again later.';
       }
 
       response.status(status).json({
@@ -96,7 +98,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
         message: formattedMessage,
         data: null,
         meta: null,
-        statusCode: status,
+        status_code: status,
         timestamp: new Date().toISOString(),
         path: request.url,
         error: errorName,

@@ -1,4 +1,5 @@
 import { Controller, Get, Post, Body, Patch, Param, UseGuards, Req, Headers, BadRequestException, Delete, Query, Res } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { OrdersService } from './orders.service';
 import { CheckoutDto, UpdateOrderStatusDto, CreateManualOrderDto, UpdateOrderItemsDto, UpdateOrderAddressDto } from './dto/orders.dto';
@@ -109,6 +110,7 @@ export class OrdersController {
   }
 
   // --- STRIPE WEBHOOK ---
+  @SkipThrottle()
   @Post('ecommerce/orders/stripe-webhook')
   async stripeWebhook(@Req() req: any, @Headers('stripe-signature') signature: string) {
     const rawBody = req.rawBody;

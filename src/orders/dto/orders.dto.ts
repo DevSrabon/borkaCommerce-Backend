@@ -1,6 +1,6 @@
-import { IsString, IsNotEmpty, IsOptional, IsArray, ValidateNested, IsUUID, IsEnum, IsInt } from 'class-validator';
-import { Type } from 'class-transformer';
 import { order_status } from '@prisma/client';
+import { Type } from 'class-transformer';
+import { IsArray, IsEnum, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, ValidateNested } from 'class-validator';
 
 export class CheckoutItemDto {
   @IsString()
@@ -187,8 +187,4 @@ export class UpdateOrderAddressDto {
   @IsOptional()
   @IsString()
   full_address?: string;
-
-  @IsOptional()
-  @IsString()
-  street?: string;
 }

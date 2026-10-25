@@ -79,10 +79,18 @@ export class AuthService {
   }
 
   async verifyTurnstile(token?: string, ip?: string): Promise<boolean> {
-    const secretKey = process.env.CLOUDFLARE_TURNSTILE_SECRET_KEY || '1x0000000000000000000000000000000AA';
+    const dbSetting = await this.prisma.site_settings.findUnique({
+      where: { key: 'CLOUDFLARE_TURNSTILE_SECRET_KEY' },
+    });
+    const secretKey =
+      dbSetting?.value?.trim() ||
+      process.env.CLOUDFLARE_TURNSTILE_SECRET_KEY ||
+      '';
 
-    if (!token) {
-      if (process.env.REQUIRE_TURNSTILE === 'true') {
+    if (!token || token === 'turnstile-not-configured' || token === 'bypassed-no-key') {
+      const isRequired = process.env.REQUIRE_TURNSTILE === 'true';
+      const hasLiveSecret = Boolean(secretKey && !secretKey.startsWith('1x0000'));
+      if (isRequired && hasLiveSecret) {
         throw new BadRequestException('Security verification (Cloudflare Turnstile) is required');
       }
       return true;
@@ -92,9 +100,11 @@ export class AuthService {
       return true;
     }
 
+    const effectiveSecret = secretKey || '1x0000000000000000000000000000000AA';
+
     try {
       const formData = new URLSearchParams();
-      formData.append('secret', secretKey);
+      formData.append('secret', effectiveSecret);
       formData.append('response', token);
       if (ip) formData.append('remoteip', ip);
 
@@ -105,12 +115,12 @@ export class AuthService {
       });
       const data: any = await res.json();
       if (!data.success) {
-        if (secretKey.startsWith('1x0000')) return true;
+        if (effectiveSecret.startsWith('1x0000')) return true;
         throw new BadRequestException('Cloudflare Turnstile verification failed');
       }
       return true;
     } catch (err: any) {
-      if (secretKey.startsWith('1x0000')) return true;
+      if (effectiveSecret.startsWith('1x0000')) return true;
       throw new BadRequestException(err.message || 'Captcha verification error');
     }
   }
@@ -500,7 +510,7 @@ export class AuthService {
         map['CLOUDFLARE_TURNSTILE_SITE_KEY'] ||
         map['cloudflare_turnstile_site_key'] ||
         process.env.CLOUDFLARE_TURNSTILE_SITE_KEY ||
-        '1x00000000000000000000AA',
+        '',
     };
   }
 

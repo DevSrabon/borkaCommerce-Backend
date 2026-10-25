@@ -1,7 +1,9 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './auth/auth.module';
 import { CategoriesModule } from './categories/categories.module';
@@ -14,7 +16,6 @@ import { SiteSettingsModule } from './site-settings/site-settings.module';
 import { ReviewsModule } from './reviews/reviews.module';
 import { MailModule } from './mail/mail.module';
 import { ChatModule } from './chat/chat.module';
-import { PagesModule } from './pages/pages.module';
 import { LoggerModule } from './logger/logger.module';
 import { HttpLoggerMiddleware } from './logger/http-logger.middleware';
 
@@ -29,13 +30,23 @@ import { NavbarModule } from './navbar/navbar.module';
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    ThrottlerModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => [
+        {
+          name: 'default',
+          ttl: config.get<number>('RATE_LIMIT_TTL') ? Number(config.get('RATE_LIMIT_TTL')) : 60000,
+          limit: config.get<number>('RATE_LIMIT_MAX') ? Number(config.get('RATE_LIMIT_MAX')) : 100,
+        },
+      ],
+    }),
     DatabaseModule,
     RealtimeModule,
     AuthModule,
     MailModule,
     NotificationsModule,
     ChatModule,
-    PagesModule,
     BlogsModule,
     LoggerModule,
     CategoriesModule,
@@ -50,7 +61,13 @@ import { NavbarModule } from './navbar/navbar.module';
     NavbarModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+  ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

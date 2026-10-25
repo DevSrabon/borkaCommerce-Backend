@@ -1,4 +1,5 @@
 import { Controller, Get, Req, Res } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import { AppService } from './app.service';
 import type { Request, Response } from 'express';
 
@@ -6,6 +7,7 @@ import type { Request, Response } from 'express';
 export class AppController {
   constructor(private readonly appService: AppService) {}
 
+  @SkipThrottle()
   @Get()
   getRoot(@Req() req: Request, @Res() res: Response) {
     const accept = req.headers['accept'] || '';
@@ -15,6 +17,7 @@ export class AppController {
     return res.json(this.appService.getStatusJson());
   }
 
+  @SkipThrottle()
   @Get('health')
   getHealth() {
     return {

@@ -1,18 +1,21 @@
-import 'dotenv/config';
-import { NestFactory } from '@nestjs/core';
-import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
-import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
-import { LoggerService } from './logger/logger.service';
-import { AllExceptionsFilter } from './logger/all-exceptions.filter';
-import { TransformInterceptor } from './common/interceptors/transform.interceptor';
+import { NestFactory } from '@nestjs/core';
+import 'dotenv/config';
 import * as express from 'express';
-import * as path from 'path';
 import * as fs from 'fs';
+import * as path from 'path';
+import { AppModule } from './app.module';
+import { TransformInterceptor } from './common/interceptors/transform.interceptor';
+import { AllExceptionsFilter } from './logger/all-exceptions.filter';
+import { LoggerService } from './logger/logger.service';
 
 async function bootstrap() {
   // rawBody is required to verify Stripe Webhook signatures
   const app = await NestFactory.create(AppModule, { rawBody: true });
+
+  // Trust reverse proxy headers (e.g. Cloudflare, Nginx) for accurate client IP detection and Rate Limiting
+  const expressApp = app.getHttpAdapter().getInstance();
+  expressApp.set('trust proxy', true);
 
   // Ensure uploads folder and sub-folders exist
   const uploadsPath = path.join(process.cwd(), 'uploads');
@@ -56,14 +59,14 @@ async function bootstrap() {
   });
 
   // Configure Swagger API Documentation
-  const config = new DocumentBuilder()
-    .setTitle('BorkaCommerce API')
-    .setDescription('The BorkaCommerce eCommerce single-vendor API documentation')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+  // const config = new DocumentBuilder()
+  //   .setTitle('BorkaCommerce API')
+  //   .setDescription('The BorkaCommerce eCommerce single-vendor API documentation')
+  //   .setVersion('1.0')
+  //   .addBearerAuth()
+  //   .build();
+  // const document = SwaggerModule.createDocument(app, config);
+  // SwaggerModule.setup('api/docs', app, document);
 
   const port = process.env.PORT ?? 8080;
   await app.listen(port);

@@ -581,12 +581,12 @@ model chat_messages {
   @@index([created_at])
 }
 
-// 29. Dynamic CMS Pages (WordPress / Elementor-style Drag and Drop Page Builder)
+// 29. Dynamic CMS Pages (Legacy Page Builder model)
 model pages {
   id               String   @id @default(uuid())
   title            String
   slug             String   @unique
-  content          String?  @db.Text // JSON string containing ordered block array
+  content          String?  @db.Text
   html_cache       String?  @db.Text
   meta_title       String?
   meta_description String?
