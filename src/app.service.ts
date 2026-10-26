@@ -9,7 +9,6 @@ export class AppService {
       version: '1.0.0',
       status: 'operational',
       message: 'Saba Al Wadi API Service is online and operational',
-      documentation: '/api/docs',
       health: '/health',
       timestamp: new Date().toISOString(),
     };
@@ -205,11 +204,7 @@ export class AppService {
     </div>
 
     <div class="actions">
-      <a class="btn btn-primary" href="/api/docs" target="_blank">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/><path d="M6 6h10"/><path d="M6 10h10"/></svg>
-        Swagger API Docs
-      </a>
-      <a class="btn btn-secondary" href="/health">
+      <a class="btn btn-primary" href="/health">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
         Health Check
       </a>

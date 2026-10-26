@@ -173,6 +173,24 @@ export class OrdersController {
   }
 
   @UseGuards(AdminGuard)
+  @Post('admin/orders/:id/send-tracking')
+  sendTrackingEmailAlias(@Param('id') id: string) {
+    return this.ordersService.sendTrackingEmailToCustomer(id);
+  }
+
+  @UseGuards(AdminGuard)
+  @Patch('admin/orders/:id/tracking')
+  updateOrderTrackingPatch(@Param('id') id: string, @Body() updateOrderStatusDto: UpdateOrderStatusDto) {
+    return this.ordersService.updateStatus(id, updateOrderStatusDto);
+  }
+
+  @UseGuards(AdminGuard)
+  @Post('admin/orders/:id/tracking')
+  updateOrderTrackingPost(@Param('id') id: string, @Body() updateOrderStatusDto: UpdateOrderStatusDto) {
+    return this.ordersService.updateStatus(id, updateOrderStatusDto);
+  }
+
+  @UseGuards(AdminGuard)
   @Post('admin/orders/manual')
   createManualOrder(@Body() createManualOrderDto: CreateManualOrderDto) {
     return this.ordersService.createManualOrder(createManualOrderDto);

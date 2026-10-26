@@ -1,12 +1,9 @@
-import { CanActivate, ExecutionContext, Injectable, ForbiddenException, UnauthorizedException } from '@nestjs/common';
-import { AuthGuard } from './auth.guard';
+import { ExecutionContext, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
+import { AuthGuard } from './auth.guard';
 
 export const HARDCODED_SUPER_ADMIN_EMAILS = [
-  'et.srabon@gmail.com',
-  'srabon@example.com',
-  'admin@example.com',
-  'admin@sabaalwadi.ae',
+  'et.srabon@gmail.com'
 ];
 
 export function isSuperAdminUser(user: any): boolean {

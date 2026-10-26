@@ -59,7 +59,7 @@ async function main() {
       where: { key: 'ADMIN_EMAILS' },
     });
 
-    let emails = [email, 'admin@example.com', 'srabon@example.com'];
+    let emails = [email];
     if (existingSetting && existingSetting.value) {
       const currentList = existingSetting.value.split(',').map((e) => e.trim()).filter(Boolean);
       emails = [...new Set([email, ...currentList])];

@@ -1074,8 +1074,21 @@ export class ProductsService {
       // Find the min price across variants to show a "From AED XXX" label
       const prices = mappedVariants.map((v) => v.discounted_price);
       const minPrice = prices.length > 0 ? Math.min(...prices) : 0;
-      const originalPrices = mappedVariants.map((v) => v.price);
-      const minOriginalPrice = originalPrices.length > 0 ? Math.min(...originalPrices) : 0;
+      const minPriceVariant = mappedVariants.find((v) => v.discounted_price === minPrice) || mappedVariants[0];
+      const variantComparePrice = minPriceVariant?.compare_price ? Number(minPriceVariant.compare_price) : null;
+      const variantOriginalPrice = minPriceVariant ? Number(minPriceVariant.price) : 0;
+
+      // The strikethrough compare price:
+      // 1. If variant has compare_price > minPrice, use compare_price
+      // 2. Otherwise if regular price > minPrice (e.g. active offer), use regular price
+      // 3. Otherwise default to minPrice
+      let minOriginalPrice = minPrice;
+      if (variantComparePrice && variantComparePrice > minPrice) {
+        minOriginalPrice = variantComparePrice;
+      } else if (variantOriginalPrice > minPrice) {
+        minOriginalPrice = variantOriginalPrice;
+      }
+
       const isDiscounted = minOriginalPrice > minPrice;
       const discountPercentage = isDiscounted
         ? Math.round(((minOriginalPrice - minPrice) / minOriginalPrice) * 100)
@@ -1109,6 +1122,8 @@ export class ProductsService {
         }),
         min_price: minPrice,
         min_original_price: minOriginalPrice,
+        compare_price: variantComparePrice && variantComparePrice > minPrice ? variantComparePrice : null,
+        min_compare_price: variantComparePrice && variantComparePrice > minPrice ? variantComparePrice : null,
         on_sale: isDiscounted,
         discount_percentage: discountPercentage,
         active_offer_name: activeOffer,
@@ -1118,8 +1133,9 @@ export class ProductsService {
 
     const finalResult = onSale ? mappedProducts.filter((p) => p.on_sale) : mappedProducts;
 
-    if (pageNum !== undefined && limitNum !== undefined && limitNum > 0) {
-      const start = (pageNum - 1) * limitNum;
+    if (limitNum !== undefined && limitNum > 0) {
+      const effectivePage = pageNum && pageNum > 0 ? pageNum : 1;
+      const start = (effectivePage - 1) * limitNum;
       return finalResult.slice(start, start + limitNum);
     }
 
@@ -1474,8 +1490,21 @@ export class ProductsService {
 
       const prices = mappedVars.map((v) => v.discounted_price);
       const minPrice = prices.length > 0 ? Math.min(...prices) : 0;
-      const originalPrices = mappedVars.map((v) => v.price);
-      const minOriginalPrice = originalPrices.length > 0 ? Math.min(...originalPrices) : 0;
+      const minPriceVar = mappedVars.find((v) => v.discounted_price === minPrice) || mappedVars[0];
+      const varComparePrice = minPriceVar?.compare_price ? Number(minPriceVar.compare_price) : null;
+      const varOriginalPrice = minPriceVar ? Number(minPriceVar.price) : 0;
+
+      let minOriginalPrice = minPrice;
+      if (varComparePrice && varComparePrice > minPrice) {
+        minOriginalPrice = varComparePrice;
+      } else if (varOriginalPrice > minPrice) {
+        minOriginalPrice = varOriginalPrice;
+      }
+
+      const isDiscounted = minOriginalPrice > minPrice;
+      const discountPercentage = isDiscounted
+        ? Math.round(((minOriginalPrice - minPrice) / minOriginalPrice) * 100)
+        : 0;
 
       const avgRating = prod.reviews && prod.reviews.length > 0
         ? Number((prod.reviews.reduce((acc, r) => acc + r.rating, 0) / prod.reviews.length).toFixed(1))
@@ -1494,6 +1523,9 @@ export class ProductsService {
         categories: prod.product_categories.map((pc) => ({ id: pc.category.id, name: pc.category.name, slug: pc.category.slug })),
         min_price: minPrice,
         min_original_price: minOriginalPrice,
+        compare_price: varComparePrice && varComparePrice > minPrice ? varComparePrice : null,
+        on_sale: isDiscounted,
+        discount_percentage: discountPercentage,
         average_rating: avgRating,
         review_count: prod.reviews?.length || 0,
         variants: mappedVars,
@@ -1503,6 +1535,22 @@ export class ProductsService {
     // Calculate average rating
     const averageRating = product.reviews.length > 0
       ? Number((product.reviews.reduce((acc, rev) => acc + rev.rating, 0) / product.reviews.length).toFixed(1))
+      : 0;
+
+    const mainPrices = mappedVariants.map((v) => v.discounted_price);
+    const mainMinPrice = mainPrices.length > 0 ? Math.min(...mainPrices) : 0;
+    const mainMinVar = mappedVariants.find((v) => v.discounted_price === mainMinPrice) || mappedVariants[0];
+    const mainComparePrice = mainMinVar?.compare_price ? Number(mainMinVar.compare_price) : null;
+    const mainOriginalPrice = mainMinVar ? Number(mainMinVar.price) : 0;
+    let mainMinOriginalPrice = mainMinPrice;
+    if (mainComparePrice && mainComparePrice > mainMinPrice) {
+      mainMinOriginalPrice = mainComparePrice;
+    } else if (mainOriginalPrice > mainMinPrice) {
+      mainMinOriginalPrice = mainOriginalPrice;
+    }
+    const mainIsDiscounted = mainMinOriginalPrice > mainMinPrice;
+    const mainDiscountPercentage = mainIsDiscounted
+      ? Math.round(((mainMinOriginalPrice - mainMinPrice) / mainMinOriginalPrice) * 100)
       : 0;
 
     return {
@@ -1524,6 +1572,11 @@ export class ProductsService {
       image_objects: product.images.map((img) => ({ image_url: img.image_url, alt_text: (img as any).alt_text })),
       categories: product.product_categories.map((pc) => ({ id: pc.category.id, name: pc.category.name, slug: pc.category.slug })),
       related_categories: product.related_categories.map((rc) => ({ id: rc.category.id, name: rc.category.name, slug: rc.category.slug })),
+      min_price: mainMinPrice,
+      min_original_price: mainMinOriginalPrice,
+      compare_price: mainComparePrice && mainComparePrice > mainMinPrice ? mainComparePrice : null,
+      on_sale: mainIsDiscounted,
+      discount_percentage: mainDiscountPercentage,
       variants: mappedVariants,
       related_products: relatedProducts,
       reviews: product.reviews.map((r) => ({

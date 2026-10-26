@@ -558,6 +558,7 @@ export class PromotionsService {
       'promo_popup_btn_url',
       'promo_popup_delay',
       'promo_popup_frequency',
+      'promo_popup_version',
     ];
     const settings = await this.prisma.site_settings.findMany({
       where: { key: { in: keys } },
@@ -578,6 +579,7 @@ export class PromotionsService {
       btn_url: map['promo_popup_btn_url'] || '/catalog',
       delay_seconds: Number(map['promo_popup_delay'] || '3'),
       frequency: (map['promo_popup_frequency'] as any) || 'once_per_session',
+      version: map['promo_popup_version'] || '1',
     };
   }
 
@@ -594,6 +596,10 @@ export class PromotionsService {
     if (dto.delay_seconds !== undefined) updates.push({ key: 'promo_popup_delay', value: String(dto.delay_seconds) });
     if (dto.frequency !== undefined) updates.push({ key: 'promo_popup_frequency', value: dto.frequency });
 
+    // Always bump version timestamp when popup is modified so same-session / returning users see the new version
+    const newVersion = Date.now().toString();
+    updates.push({ key: 'promo_popup_version', value: newVersion });
+
     for (const u of updates) {
       await this.prisma.site_settings.upsert({
         where: { key: u.key },
@@ -605,10 +611,25 @@ export class PromotionsService {
     return this.getPromoPopup();
   }
 
+  async resetPopupSession() {
+    const newVersion = Date.now().toString();
+    await this.prisma.site_settings.upsert({
+      where: { key: 'promo_popup_version' },
+      create: { key: 'promo_popup_version', value: newVersion },
+      update: { value: newVersion },
+    });
+
+    return {
+      success: true,
+      version: newVersion,
+      message: 'Popup session reset successfully! All visitors will see the updated popup on their next view.',
+    };
+  }
+
   async getPublicPromoPopup() {
     const popup = await this.getPromoPopup();
     if (!popup.enabled) {
-      return { enabled: false };
+      return { enabled: false, version: popup.version };
     }
     return popup;
   }

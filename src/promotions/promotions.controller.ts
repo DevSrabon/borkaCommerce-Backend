@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, UseGuards, Req, Query, Res } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Put, Delete, Param, Body, UseGuards, Req, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { PromotionsService } from './promotions.service';
 import {
@@ -132,8 +132,36 @@ export class PromotionsController {
     return this.promotionsService.updatePromoPopup(dto);
   }
 
+  @UseGuards(AdminGuard)
+  @Patch('admin/promotions/popup')
+  updatePromoPopupPatch(@Body() dto: UpdatePromoPopupDto) {
+    return this.promotionsService.updatePromoPopup(dto);
+  }
+
+  @UseGuards(AdminGuard)
+  @Put('admin/promotions/popup')
+  updatePromoPopupPut(@Body() dto: UpdatePromoPopupDto) {
+    return this.promotionsService.updatePromoPopup(dto);
+  }
+
+  @UseGuards(AdminGuard)
+  @Post('admin/promotions/popup/reset')
+  resetPopupSession() {
+    return this.promotionsService.resetPopupSession();
+  }
+
   @Get('public/promotions/popup')
   getPublicPromoPopup() {
+    return this.promotionsService.getPublicPromoPopup();
+  }
+
+  @Get('ecommerce/promotions/popup')
+  getEcommercePromoPopup() {
+    return this.promotionsService.getPublicPromoPopup();
+  }
+
+  @Get('ecommerce/popup')
+  getEcommercePopupShort() {
     return this.promotionsService.getPublicPromoPopup();
   }
 }

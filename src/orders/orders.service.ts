@@ -1655,13 +1655,16 @@ export class OrdersService implements OnModuleInit {
       include: { items: true, customer: true },
     });
 
-    if (dto.notify_customer && updated.customer) {
+    if (dto.notify_customer && updated.customer?.email) {
       try {
-        if (dto.tracking_number && !dto.status) {
+        const hasTracking = Boolean(updated.tracking_number || updated.delivery_partner);
+        const isTrackingUpdate = Boolean(dto.tracking_number || dto.delivery_partner || dto.tracking_url);
+
+        if (hasTracking && (!dto.status || isTrackingUpdate)) {
           // Specifically notify tracking number & courier
           await this.mailService.sendTrackingNotificationEmail(
             updated.customer.email,
-            updated.customer.first_name,
+            updated.customer.first_name || 'Customer',
             updated.order_number,
             updated.delivery_partner || undefined,
             updated.tracking_number || undefined,
@@ -1671,7 +1674,7 @@ export class OrdersService implements OnModuleInit {
         } else if (dto.status) {
           await this.mailService.sendOrderStatusUpdateEmail(
             updated.customer.email,
-            updated.customer.first_name,
+            updated.customer.first_name || 'Customer',
             updated.order_number,
             updated.status,
             updated.delivery_partner || undefined,
@@ -1680,7 +1683,7 @@ export class OrdersService implements OnModuleInit {
           );
         }
       } catch (err: any) {
-        // non-blocking
+        this.logger.error(`Failed to send order email to ${updated.customer?.email}: ${err.message}`);
       }
     }
 
