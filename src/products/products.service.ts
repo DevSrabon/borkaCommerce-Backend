@@ -111,19 +111,21 @@ export class ProductsService {
       }
 
       // 4. Create Product Variants
-      for (const variantDto of dto.variants) {
+      for (let i = 0; i < dto.variants.length; i++) {
+        const variantDto = dto.variants[i];
+        const effectiveSku = variantDto.sku?.trim() || `${productNumber}-${String(i + 1).padStart(2, '0')}`;
         // Check sku uniqueness
         const skuExists = await tx.product_variants.findUnique({
-          where: { sku: variantDto.sku },
+          where: { sku: effectiveSku },
         });
         if (skuExists) {
-          throw new BadRequestException(`SKU ${variantDto.sku} is already in use`);
+          throw new BadRequestException(`SKU ${effectiveSku} is already in use`);
         }
 
         const variant = await tx.product_variants.create({
           data: {
             product_id: product.id,
-            sku: variantDto.sku,
+            sku: effectiveSku,
             barcode: variantDto.barcode,
             weight: variantDto.weight,
             price: variantDto.price,
