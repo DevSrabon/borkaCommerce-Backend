@@ -871,7 +871,6 @@ export class OrdersService implements OnModuleInit {
             await tx.inventory_transactions.create({
               data: {
                 variant_id: item.variant_id,
-                warehouse_id: inv.warehouse_id,
                 type: inventory_transaction_type.SALE,
                 quantity: -toDeduct,
                 reference_type: 'ORDER_FULFILLED',
@@ -1071,7 +1070,6 @@ export class OrdersService implements OnModuleInit {
                 await tx.inventory_transactions.create({
                   data: {
                     variant_id: item.variant_id,
-                    warehouse_id: inv.warehouse_id,
                     type: inventory_transaction_type.SALE,
                     quantity: -toDeduct,
                     reference_type: 'ORDER_FULFILLED',

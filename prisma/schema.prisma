@@ -106,7 +106,7 @@ model categories {
 // 2. Products
 model products {
   id                String            @id @default(uuid())
-  product_number    String?           @unique
+  product_code      String?           @unique
   name              String
   slug              String            @unique
   description       String
@@ -215,28 +215,15 @@ model variant_images {
   sort_order Int              @default(0)
 }
 
-// 9. Warehouses
-model warehouses {
-  id           String                 @id @default(uuid())
-  name         String
-  location     String
-  inventories  inventory[]
-  transactions inventory_transactions[]
-}
-
 // 10. Inventory
 model inventory {
   id                 String           @id @default(uuid())
-  variant_id         String
+  variant_id         String           @unique
   variant            product_variants @relation(fields: [variant_id], references: [id], onDelete: Cascade)
-  warehouse_id       String
-  warehouse          warehouses       @relation(fields: [warehouse_id], references: [id], onDelete: Cascade)
   quantity           Int              @default(0)
   reserved_quantity  Int              @default(0)
   available_quantity Int              @default(0)
   updated_at         DateTime         @updatedAt
-
-  @@unique([variant_id, warehouse_id])
 }
 
 // 11. Offers
@@ -484,8 +471,6 @@ model inventory_transactions {
   id             String                    @id @default(uuid())
   variant_id     String
   variant        product_variants          @relation(fields: [variant_id], references: [id], onDelete: Cascade)
-  warehouse_id   String
-  warehouse      warehouses                @relation(fields: [warehouse_id], references: [id], onDelete: Cascade)
   type           inventory_transaction_type
   quantity       Int
   reference_type String?
@@ -780,4 +765,15 @@ model navbar_items {
   @@index([type])
 }
 
+// 36. Visitor Logs (Storefront analytics)
+model visitor_logs {
+  id         String   @id @default(uuid())
+  ip_address String?
+  user_agent String?
+  page_url   String?
+  visitor_id String?
+  created_at DateTime @default(now())
 
+  @@index([created_at])
+  @@index([visitor_id, created_at])
+}

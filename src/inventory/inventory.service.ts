@@ -1,45 +1,11 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
-import { CreateWarehouseDto, AdjustInventoryDto, BatchAdjustInventoryDto } from './dto/inventory.dto';
+import { AdjustInventoryDto, BatchAdjustInventoryDto } from './dto/inventory.dto';
 import { inventory_transaction_type } from '@prisma/client';
 
 @Injectable()
 export class InventoryService {
   constructor(private prisma: PrismaService) {}
-
-  async getDefaultWarehouse() {
-    let warehouse = await this.prisma.warehouses.findFirst();
-    if (!warehouse) {
-      warehouse = await this.prisma.warehouses.create({
-        data: {
-          name: 'Main Store / Warehouse',
-          location: 'Dubai, UAE',
-        },
-      });
-    }
-    return warehouse;
-  }
-
-  async createWarehouse(dto: CreateWarehouseDto) {
-    return this.prisma.warehouses.create({
-      data: dto,
-    });
-  }
-
-  async findAllWarehouses(limit = 50, skip = 0) {
-    const take = Number(limit) > 0 ? Number(limit) : 50;
-    const skipCount = Number(skip) >= 0 ? Number(skip) : 0;
-
-    const [items, total] = await Promise.all([
-      this.prisma.warehouses.findMany({
-        take,
-        skip: skipCount,
-      }),
-      this.prisma.warehouses.count(),
-    ]);
-
-    return { items, total };
-  }
 
   async adjustStock(dto: AdjustInventoryDto) {
     // Verify variant exists
@@ -48,20 +14,6 @@ export class InventoryService {
     });
     if (!variant) {
       throw new NotFoundException('Variant not found');
-    }
-
-    // Resolve warehouse (default if not provided)
-    let warehouseId = dto.warehouse_id;
-    if (!warehouseId) {
-      const defaultWh = await this.getDefaultWarehouse();
-      warehouseId = defaultWh.id;
-    } else {
-      const warehouse = await this.prisma.warehouses.findUnique({
-        where: { id: warehouseId },
-      });
-      if (!warehouse) {
-        throw new NotFoundException('Warehouse not found');
-      }
     }
 
     const txType =
@@ -75,12 +27,7 @@ export class InventoryService {
     return this.prisma.$transaction(async (tx) => {
       // Find or create inventory mapping
       let inv = await tx.inventory.findUnique({
-        where: {
-          variant_id_warehouse_id: {
-            variant_id: dto.variant_id,
-            warehouse_id: warehouseId,
-          },
-        },
+        where: { variant_id: dto.variant_id },
       });
 
       if (!inv) {
@@ -91,7 +38,6 @@ export class InventoryService {
         inv = await tx.inventory.create({
           data: {
             variant_id: dto.variant_id,
-            warehouse_id: warehouseId,
             quantity: 0,
             reserved_quantity: 0,
             available_quantity: 0,
@@ -121,7 +67,6 @@ export class InventoryService {
       await tx.inventory_transactions.create({
         data: {
           variant_id: dto.variant_id,
-          warehouse_id: warehouseId,
           type: txType,
           quantity: dto.quantity,
           reference_type: auditRef,
@@ -136,13 +81,6 @@ export class InventoryService {
   async batchAdjust(dto: BatchAdjustInventoryDto) {
     if (!dto.items || dto.items.length === 0) {
       throw new BadRequestException('No items provided for stock adjustment');
-    }
-
-    // Resolve warehouse (default if not provided)
-    let warehouseId = dto.warehouse_id;
-    if (!warehouseId) {
-      const defaultWh = await this.getDefaultWarehouse();
-      warehouseId = defaultWh.id;
     }
 
     const auditRef = dto.note?.trim() || dto.reference_type || 'BATCH_ADJUSTMENT';
@@ -169,12 +107,7 @@ export class InventoryService {
             : inventory_transaction_type.MANUAL_ADJUSTMENT);
 
         let inv = await tx.inventory.findUnique({
-          where: {
-            variant_id_warehouse_id: {
-              variant_id: item.variant_id,
-              warehouse_id: warehouseId,
-            },
-          },
+          where: { variant_id: item.variant_id },
         });
 
         if (!inv) {
@@ -185,7 +118,6 @@ export class InventoryService {
           inv = await tx.inventory.create({
             data: {
               variant_id: item.variant_id,
-              warehouse_id: warehouseId,
               quantity: 0,
               reserved_quantity: 0,
               available_quantity: 0,
@@ -213,7 +145,6 @@ export class InventoryService {
         await tx.inventory_transactions.create({
           data: {
             variant_id: item.variant_id,
-            warehouse_id: warehouseId,
             type: txType,
             quantity: item.quantity,
             reference_type: auditRef,
@@ -313,7 +244,6 @@ export class InventoryService {
               },
             },
           },
-          warehouse: true,
         },
         orderBy: { updated_at: 'desc' },
       }),
@@ -380,7 +310,6 @@ export class InventoryService {
         take,
         skip: skipCount,
         include: {
-          warehouse: true,
           variant: {
             include: { product: true },
           },

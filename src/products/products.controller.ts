@@ -184,10 +184,17 @@ export class ProductsController {
   }
 
   @UseGuards(AdminGuard)
+  @Get('admin/products/next-code')
+  async getNextProductCode() {
+    const nextCode = await this.productsService.generateNextProductCode();
+    return { next_product_code: nextCode };
+  }
+
+  @UseGuards(AdminGuard)
   @Get('admin/products/next-number')
   async getNextProductNumber() {
-    const nextNumber = await this.productsService.generateNextProductNumber();
-    return { next_product_number: nextNumber };
+    const nextCode = await this.productsService.generateNextProductCode();
+    return { next_product_code: nextCode };
   }
 
   @UseGuards(AdminGuard)

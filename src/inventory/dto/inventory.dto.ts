@@ -2,24 +2,10 @@ import { IsString, IsNotEmpty, IsOptional, IsInt, IsUUID, IsEnum, IsArray, Valid
 import { Type } from 'class-transformer';
 import { inventory_transaction_type } from '@prisma/client';
 
-export class CreateWarehouseDto {
-  @IsString()
-  @IsNotEmpty()
-  name: string;
-
-  @IsString()
-  @IsNotEmpty()
-  location: string;
-}
-
 export class AdjustInventoryDto {
   @IsUUID()
   @IsNotEmpty()
   variant_id: string;
-
-  @IsUUID()
-  @IsOptional()
-  warehouse_id?: string;
 
   @IsInt()
   @IsNotEmpty()
@@ -57,10 +43,6 @@ export class BatchAdjustInventoryDto {
   @ValidateNested({ each: true })
   @Type(() => BatchAdjustItemDto)
   items: BatchAdjustItemDto[];
-
-  @IsUUID()
-  @IsOptional()
-  warehouse_id?: string;
 
   @IsEnum(inventory_transaction_type)
   @IsOptional()

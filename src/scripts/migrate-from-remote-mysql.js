@@ -24,20 +24,6 @@ async function main() {
 
   console.log('✓ Connected to remote MySQL (saba-ecom) successfully!');
 
-  // Ensure primary warehouse exists in PostgreSQL
-  let defaultWarehouse = await prisma.warehouses.findFirst({
-    where: { name: { contains: 'Dubai', mode: 'insensitive' } },
-  });
-  if (!defaultWarehouse) {
-    defaultWarehouse = await prisma.warehouses.create({
-      data: {
-        name: 'Dubai Main Warehouse',
-        location: 'Al Quoz Industrial Area 3, Dubai, UAE',
-      },
-    });
-  }
-  console.log(`✓ Default warehouse: ${defaultWarehouse.name} (${defaultWarehouse.id})`);
-
   // =========================================================================
   // 1. MIGRATE CATEGORIES
   // =========================================================================
@@ -206,15 +192,15 @@ async function main() {
     prodInventoryMap.set(inv.i_p_id, inv.i_quantity_available);
   }
 
-  // Determine current max product_number
+  // Determine current max product_code
   const allExistingProducts = await prisma.products.findMany({
-    select: { product_number: true },
-    where: { product_number: { not: null } },
+    select: { product_code: true },
+    where: { product_code: { not: null } },
   });
   const maxPno = Math.max(
     1000,
     ...allExistingProducts
-      .map(p => parseInt((p.product_number || '').replace(/\D/g, ''), 10))
+      .map(p => parseInt((p.product_code || '').replace(/\D/g, ''), 10))
       .filter(n => !isNaN(n))
   );
   let nextProductSeq = maxPno + 1;
@@ -223,7 +209,7 @@ async function main() {
     const slug = rp.p_slug || rp.p_name_en.toLowerCase().replace(/[^a-z0-9]+/g, '-');
 
     const existingProduct = await prisma.products.findUnique({ where: { slug } });
-    const productNumber = existingProduct?.product_number || `P${nextProductSeq++}`;
+    const productCode = existingProduct?.product_code || `P${nextProductSeq++}`;
 
     const description = rp.p_details_en || rp.p_desc_en || rp.p_name_en;
     const shortDescription = rp.p_desc_en ? rp.p_desc_en.slice(0, 300) : null;
@@ -249,7 +235,7 @@ async function main() {
         data: {
           name: rp.p_name_en,
           slug,
-          product_number: productNumber,
+          product_code: productCode,
           description,
           short_description: shortDescription,
           seo_title: rp.seo_title || rp.p_name_en,
@@ -349,7 +335,7 @@ async function main() {
 
     for (const sId of sizesToUse) {
       for (const cId of colorsToUse) {
-        const sku = `${localProduct.product_number || 'P' + rp.p_id}-S${sId || 0}-C${cId || 0}`;
+        const sku = `${localProduct.product_code || 'P' + rp.p_id}-S${sId || 0}-C${cId || 0}`;
 
         let variant = await prisma.product_variants.findUnique({ where: { sku } });
         if (!variant) {
@@ -405,14 +391,13 @@ async function main() {
 
         // Create or update inventory
         await prisma.inventory.upsert({
-          where: { variant_id_warehouse_id: { variant_id: variant.id, warehouse_id: defaultWarehouse.id } },
+          where: { variant_id: variant.id },
           update: {
             quantity: stockPerVariant,
             available_quantity: stockPerVariant,
           },
           create: {
             variant_id: variant.id,
-            warehouse_id: defaultWarehouse.id,
             quantity: stockPerVariant,
             available_quantity: stockPerVariant,
           },

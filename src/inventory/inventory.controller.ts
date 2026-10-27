@@ -1,33 +1,13 @@
 import { Controller, Get, Post, Delete, Param, Body, Query, UseGuards, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { InventoryService } from './inventory.service';
-import { CreateWarehouseDto, AdjustInventoryDto, BatchAdjustInventoryDto } from './dto/inventory.dto';
+import { AdjustInventoryDto, BatchAdjustInventoryDto } from './dto/inventory.dto';
 import { AdminGuard } from '../auth/admin.guard';
 
 @UseGuards(AdminGuard)
 @Controller('admin')
 export class InventoryController {
   constructor(private readonly inventoryService: InventoryService) {}
-
-  @Post('warehouses')
-  createWarehouse(@Body() createWarehouseDto: CreateWarehouseDto) {
-    return this.inventoryService.createWarehouse(createWarehouseDto);
-  }
-
-  @Get('warehouses')
-  async findAllWarehouses(
-    @Query('limit') limit?: string,
-    @Query('skip') skip?: string,
-    @Res({ passthrough: true }) res?: Response,
-  ) {
-    const limitNum = limit ? parseInt(limit, 10) : 50;
-    const skipNum = skip ? parseInt(skip, 10) : 0;
-    const { items, total } = await this.inventoryService.findAllWarehouses(limitNum, skipNum);
-    if (res) {
-      res.setHeader('x-total-count', total.toString());
-    }
-    return items;
-  }
 
   @Post('inventory/adjust')
   adjustStock(@Body() adjustInventoryDto: AdjustInventoryDto) {
@@ -54,7 +34,7 @@ export class InventoryController {
     @Res({ passthrough: true }) res?: Response,
   ) {
     const pageNum = page ? Math.max(1, parseInt(page, 10)) : 1;
-    const limitNum = limit ? (limit === 'all' ? 0 : parseInt(limit, 10)) : 25;
+    const limitNum = limit ? (limit === 'all' ? 0 : Math.max(1, parseInt(limit, 10))) : 25;
     const skipNum = skip ? parseInt(skip, 10) : undefined;
     const result = await this.inventoryService.getInventoryStatus({
       page: pageNum,

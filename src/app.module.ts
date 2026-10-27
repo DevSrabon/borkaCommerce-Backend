@@ -24,6 +24,7 @@ import { RedisModule } from './redis/redis.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { NavbarModule } from './navbar/navbar.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 
 @Module({
   imports: [
@@ -59,6 +60,7 @@ import { NavbarModule } from './navbar/navbar.module';
     ReviewsModule,
     RedisModule,
     NavbarModule,
+    AnalyticsModule,
   ],
   controllers: [AppController],
   providers: [

@@ -27,16 +27,19 @@ export class ProductsService {
       throw new BadRequestException('Product slug already exists');
     }
 
-    // Generate or validate sequential product number (e.g. P1000)
-    let productNumber = dto.product_number?.trim();
-    if (!productNumber) {
-      productNumber = await this.generateNextProductNumber();
+    // Generate or validate sequential product code (e.g. P1000)
+    let productCode = dto.product_code?.trim();
+    if (!productCode) {
+      productCode = await this.generateNextProductCode();
     } else {
-      const existingProductNumber = await this.prisma.products.findUnique({
-        where: { product_number: productNumber },
+      const existingProductCode = await this.prisma.products.findFirst({
+        where: {
+          product_code: productCode,
+          deleted_at: null,
+        },
       });
-      if (existingProductNumber) {
-        throw new BadRequestException(`Product number "${productNumber}" is already in use`);
+      if (existingProductCode) {
+        throw new BadRequestException(`Product code "${productCode}" is already in use`);
       }
     }
 
@@ -45,7 +48,7 @@ export class ProductsService {
       // 1. Create the Product
       const product = await tx.products.create({
         data: {
-          product_number: productNumber,
+          product_code: productCode,
           name: dto.name,
           slug: dto.slug,
           description: dto.description,
@@ -113,7 +116,7 @@ export class ProductsService {
       // 4. Create Product Variants
       for (let i = 0; i < dto.variants.length; i++) {
         const variantDto = dto.variants[i];
-        const effectiveSku = variantDto.sku?.trim() || `${productNumber}-${String(i + 1).padStart(2, '0')}`;
+        const effectiveSku = variantDto.sku?.trim() || `${productCode}-${String(i + 1).padStart(2, '0')}`;
         // Check sku uniqueness
         const skuExists = await tx.product_variants.findUnique({
           where: { sku: effectiveSku },
@@ -181,20 +184,9 @@ export class ProductsService {
         }
 
         // 4c. Set Initial Inventory
-        let warehouseId = variantDto.warehouse_id;
-        if (!warehouseId) {
-          // If no warehouse specified, select the first available warehouse
-          const defaultWarehouse = await tx.warehouses.findFirst();
-          if (!defaultWarehouse) {
-            throw new BadRequestException('No warehouses registered in the system. Create a warehouse first.');
-          }
-          warehouseId = defaultWarehouse.id;
-        }
-
         await tx.inventory.create({
           data: {
             variant_id: variant.id,
-            warehouse_id: warehouseId,
             quantity: variantDto.initial_quantity,
             reserved_quantity: 0,
             available_quantity: variantDto.initial_quantity,
@@ -205,7 +197,6 @@ export class ProductsService {
         await tx.inventory_transactions.create({
           data: {
             variant_id: variant.id,
-            warehouse_id: warehouseId,
             type: inventory_transaction_type.PURCHASE,
             quantity: variantDto.initial_quantity,
             reference_type: 'PRODUCT_CREATE',
@@ -254,7 +245,7 @@ export class ProductsService {
     if (search && search.trim()) {
       const q = search.trim();
       where.OR = [
-        { product_number: { contains: q, mode: 'insensitive' } },
+        { product_code: { contains: q, mode: 'insensitive' } },
         { name: { contains: q, mode: 'insensitive' } },
         { slug: { contains: q, mode: 'insensitive' } },
         { tags: { contains: q, mode: 'insensitive' } },
@@ -282,9 +273,7 @@ export class ProductsService {
           },
           variants: {
             include: {
-              inventories: {
-                include: { warehouse: true },
-              },
+              inventories: true,
             },
           },
           images: true,
@@ -327,7 +316,7 @@ export class ProductsService {
         OR: [
           { id },
           { slug: id },
-          { product_number: id },
+          { product_code: id },
         ],
         deleted_at: null,
       },
@@ -382,12 +371,26 @@ export class ProductsService {
       }
     }
 
+    const incomingCode = dto.product_code?.trim();
+    if (incomingCode) {
+      const existing = await this.prisma.products.findFirst({
+        where: {
+          product_code: incomingCode,
+          id: { not: id },
+          deleted_at: null,
+        },
+      });
+      if (existing) {
+        throw new BadRequestException(`Product code "${incomingCode}" is already in use`);
+      }
+    }
+
     const deletedImagePaths: string[] = [];
     const updated = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.products.update({
         where: { id },
         data: {
-          product_number: dto.product_number !== undefined ? dto.product_number : undefined,
+          product_code: incomingCode !== undefined ? incomingCode : undefined,
           name: dto.name,
           slug: dto.slug,
           description: dto.description,
@@ -560,28 +563,21 @@ export class ProductsService {
 
             // Adjust inventory/quantity
             if (varDto.initial_quantity !== undefined) {
-              const defaultWarehouse = await tx.warehouses.findFirst();
-              if (defaultWarehouse) {
-                await tx.inventory.upsert({
-                  where: {
-                    variant_id_warehouse_id: {
-                      variant_id: existingVar.id,
-                      warehouse_id: defaultWarehouse.id,
-                    },
-                  },
-                  create: {
-                    variant_id: existingVar.id,
-                    warehouse_id: defaultWarehouse.id,
-                    quantity: varDto.initial_quantity,
-                    reserved_quantity: 0,
-                    available_quantity: varDto.initial_quantity,
-                  },
-                  update: {
-                    quantity: varDto.initial_quantity,
-                    available_quantity: varDto.initial_quantity,
-                  },
-                });
-              }
+              await tx.inventory.upsert({
+                where: {
+                  variant_id: existingVar.id,
+                },
+                create: {
+                  variant_id: existingVar.id,
+                  quantity: varDto.initial_quantity,
+                  reserved_quantity: 0,
+                  available_quantity: varDto.initial_quantity,
+                },
+                update: {
+                  quantity: varDto.initial_quantity,
+                  available_quantity: varDto.initial_quantity,
+                },
+              });
             }
           } else {
             // Create new variant
@@ -631,23 +627,13 @@ export class ProductsService {
             }
 
             // Set stock
-            let warehouseId = varDto.warehouse_id;
-            if (!warehouseId) {
-              const defaultWarehouse = await tx.warehouses.findFirst();
-              if (defaultWarehouse) {
-                warehouseId = defaultWarehouse.id;
-              }
-            }
-            if (warehouseId) {
-              await tx.inventory.create({
-                data: {
-                  variant_id: newVar.id,
-                  warehouse_id: warehouseId,
-                  quantity: varDto.initial_quantity || 0,
-                  available_quantity: varDto.initial_quantity || 0,
-                },
-              });
-            }
+            await tx.inventory.create({
+              data: {
+                variant_id: newVar.id,
+                quantity: varDto.initial_quantity || 0,
+                available_quantity: varDto.initial_quantity || 0,
+              },
+            });
 
             if (varDto.images && varDto.images.length > 0) {
               await tx.variant_images.createMany({
@@ -717,11 +703,39 @@ export class ProductsService {
   }
 
   async remove(id: string) {
-    await this.findOne(id); // check existence
-    // Perform soft delete
-    return this.prisma.products.update({
+    const product = await this.prisma.products.findUnique({
       where: { id },
-      data: { deleted_at: new Date(), status: product_status.ARCHIVED },
+      include: { variants: true },
+    });
+    if (!product) {
+      throw new NotFoundException(`Product with ID ${id} not found`);
+    }
+
+    const freedTimestamp = Date.now();
+
+    // Release product_code, slug, and variant SKUs so they can be immediately reused by any other product
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Rename variant SKUs
+      for (const v of product.variants) {
+        await tx.product_variants.update({
+          where: { id: v.id },
+          data: {
+            sku: `${v.sku}__del_${freedTimestamp}`,
+            barcode: v.barcode ? `${v.barcode}__del_${freedTimestamp}` : null,
+          },
+        });
+      }
+
+      // 2. Soft-delete the product, freeing product_code and slug
+      return tx.products.update({
+        where: { id },
+        data: {
+          deleted_at: new Date(),
+          status: product_status.ARCHIVED,
+          product_code: product.product_code ? `${product.product_code}__del_${freedTimestamp}` : null,
+          slug: `${product.slug}__del_${freedTimestamp}`,
+        },
+      });
     });
   }
 
@@ -915,7 +929,7 @@ export class ProductsService {
     if (search) {
       // PostgreSQL full text or basic search
       whereClause.OR = [
-        { product_number: { contains: search, mode: 'insensitive' } },
+        { product_code: { contains: search, mode: 'insensitive' } },
         { name: { contains: search, mode: 'insensitive' } },
         { description: { contains: search, mode: 'insensitive' } },
         { seo_keywords: { contains: search, mode: 'insensitive' } },
@@ -1045,7 +1059,7 @@ export class ProductsService {
           }
         }
 
-        // Available quantity is sum of all warehouse inventory available
+        // Available quantity from inventory
         const totalAvailable = v.inventories.reduce((acc, inv) => acc + inv.available_quantity, 0);
 
         return {
@@ -1100,7 +1114,7 @@ export class ProductsService {
 
       return {
         id: prod.id,
-        product_number: prod.product_number,
+        product_code: prod.product_code,
         name: prod.name,
         slug: prod.slug,
         description: prod.description,
@@ -1557,7 +1571,7 @@ export class ProductsService {
 
     return {
       id: product.id,
-      product_number: product.product_number,
+      product_code: product.product_code,
       name: product.name,
       slug: product.slug,
       description: product.description,
@@ -1596,25 +1610,26 @@ export class ProductsService {
   }
 
   /**
-   * Generates sequential product number like P1000, P1001, etc.
+   * Generates sequential product code like P1000, P1001, etc.
    */
-  async generateNextProductNumber(client?: any): Promise<string> {
+  async generateNextProductCode(client?: any): Promise<string> {
     const db = client || this.prisma;
     const rows = await db.products.findMany({
       where: {
-        product_number: {
+        product_code: {
           not: null,
         },
+        deleted_at: null,
       },
       select: {
-        product_number: true,
+        product_code: true,
       },
     });
 
     let maxNum = 999;
     for (const r of rows) {
-      if (!r.product_number) continue;
-      const match = r.product_number.match(/^P-?(\d+)$/i);
+      if (!r.product_code || r.product_code.includes('__del_')) continue;
+      const match = r.product_code.match(/^P-?(\d+)$/i);
       if (match) {
         const num = parseInt(match[1], 10);
         if (!isNaN(num) && num > maxNum) {
@@ -1624,6 +1639,10 @@ export class ProductsService {
     }
 
     return `P${maxNum + 1}`;
+  }
+
+  generateNextProductNumber(client?: any): Promise<string> {
+    return this.generateNextProductCode(client);
   }
 
   /**
@@ -1648,14 +1667,6 @@ export class ProductsService {
           'https://media.sabaalwadi.com/saba-media/product/1791910603710-850785002.png',
         ];
 
-    // 3. Default Warehouse
-    let warehouse = await this.prisma.warehouses.findFirst();
-    if (!warehouse) {
-      warehouse = await this.prisma.warehouses.create({
-        data: { name: 'Main Dubai Warehouse', location: 'Dubai, UAE' },
-      });
-    }
-
     // 4. Ensure Size attribute and values exist
     const sizeAttr = await this.prisma.attributes.upsert({
       where: { name: 'Size' },
@@ -1676,15 +1687,15 @@ export class ProductsService {
       sizeValueMap[size] = val.id;
     }
 
-    // 5. Get current max product number
+    // 5. Get current max product code
     const rows = await this.prisma.products.findMany({
-      where: { product_number: { not: null } },
-      select: { product_number: true },
+      where: { product_code: { not: null }, deleted_at: null },
+      select: { product_code: true },
     });
     let maxNum = 1000;
     for (const r of rows) {
-      if (!r.product_number) continue;
-      const match = r.product_number.match(/^P-?(\d+)$/i);
+      if (!r.product_code || r.product_code.includes('__del_')) continue;
+      const match = r.product_code.match(/^P-?(\d+)$/i);
       if (match) {
         const num = parseInt(match[1], 10);
         if (!isNaN(num) && num > maxNum) maxNum = num;
@@ -1739,7 +1750,7 @@ export class ProductsService {
       // Create Product
       const product = await this.prisma.products.create({
         data: {
-          product_number: productNumber,
+          product_code: productNumber,
           name,
           slug,
           description: `<p>Experience the timeless grace and modest elegance of the <strong>${name}</strong>. Crafted from premium breathable luxury fabrics tailored for royal Dubai occasions, everyday modest wear, and celebratory gatherings.</p><p>Features intricate detailing, tailored comfort, and exquisite drape.</p>`,
@@ -1802,17 +1813,14 @@ export class ProductsService {
           });
         }
 
-        // Warehouse inventory
-        if (warehouse) {
-          await this.prisma.inventory.create({
-            data: {
-              variant_id: variant.id,
-              warehouse_id: warehouse.id,
-              quantity: stockQty,
-              available_quantity: stockQty,
-            },
-          });
-        }
+        // Inventory
+        await this.prisma.inventory.create({
+          data: {
+            variant_id: variant.id,
+            quantity: stockQty,
+            available_quantity: stockQty,
+          },
+        });
       }
     }
 

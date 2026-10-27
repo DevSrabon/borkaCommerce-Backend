@@ -80,10 +80,6 @@ export class CreateVariantDto {
   @IsNumber()
   @IsNotEmpty()
   initial_quantity: number;
-
-  @IsUUID()
-  @IsOptional()
-  warehouse_id?: string; // If not provided, maps to the first/default warehouse
 }
 
 export class CreateProductDto {
@@ -105,7 +101,7 @@ export class CreateProductDto {
 
   @IsString()
   @IsOptional()
-  product_number?: string;
+  product_code?: string;
 
   @IsString()
   @IsOptional()
@@ -183,7 +179,7 @@ export class UpdateProductDto {
 
   @IsString()
   @IsOptional()
-  product_number?: string;
+  product_code?: string;
 
   @IsString()
   @IsOptional()
