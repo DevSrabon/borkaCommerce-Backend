@@ -14,6 +14,43 @@ export class ProductsService {
     private mailService: MailService,
   ) {}
 
+  /**
+   * Extracts product code from a variant SKU e.g. "P-1039-S12-C28" -> "P-1039", "P1040-01" -> "P1040"
+   */
+  extractProductCodeFromSku(sku?: string | null): string | null {
+    if (!sku) return null;
+    const trimmed = sku.trim();
+    const matchPrefix = trimmed.match(/^(P-?\d+)/i);
+    if (matchPrefix) {
+      return matchPrefix[1].toUpperCase();
+    }
+    const matchAny = trimmed.match(/(P-?\d+)/i);
+    if (matchAny) {
+      return matchAny[1].toUpperCase();
+    }
+    return null;
+  }
+
+  /**
+   * Resolves effective product code, prioritizing explicit code,
+   * otherwise extracting from variant SKUs (e.g. P-1039-S12-C28 -> P-1039).
+   */
+  resolveProductCode(code?: string | null, variants?: Array<{ sku?: string | null }>): string | null {
+    const trimmed = code?.trim();
+    if (trimmed && !trimmed.includes('__del_')) {
+      return trimmed;
+    }
+    if (variants && variants.length > 0) {
+      for (const v of variants) {
+        const extracted = this.extractProductCodeFromSku(v?.sku);
+        if (extracted) {
+          return extracted;
+        }
+      }
+    }
+    return trimmed || null;
+  }
+
   async create(dto: CreateProductDto) {
     // Validate at least one product image is provided
     if (!dto.images || dto.images.length === 0) {
@@ -30,7 +67,19 @@ export class ProductsService {
     // Generate or validate sequential product code (e.g. P1000)
     let productCode = dto.product_code?.trim();
     if (!productCode) {
-      productCode = await this.generateNextProductCode();
+      // Check if any variant SKU contains a product code (e.g. P-1039-S12-C28 -> P-1039)
+      if (dto.variants && dto.variants.length > 0) {
+        for (const v of dto.variants) {
+          const extracted = this.extractProductCodeFromSku(v.sku);
+          if (extracted) {
+            productCode = extracted;
+            break;
+          }
+        }
+      }
+      if (!productCode) {
+        productCode = await this.generateNextProductCode();
+      }
     } else {
       const existingProductCode = await this.prisma.products.findFirst({
         where: {
@@ -300,6 +349,7 @@ export class ProductsService {
 
       return {
         ...p,
+        product_code: this.resolveProductCode(p.product_code, p.variants),
         rating: {
           average: avgRating,
           count: reviewCount,
@@ -352,6 +402,10 @@ export class ProductsService {
       throw new NotFoundException(`Product with ID ${id} not found`);
     }
 
+    if (product) {
+      (product as any).product_code = this.resolveProductCode(product.product_code, product.variants);
+    }
+
     return product;
   }
 
@@ -371,8 +425,33 @@ export class ProductsService {
       }
     }
 
-    const incomingCode = dto.product_code?.trim();
-    if (incomingCode) {
+    let incomingCode = dto.product_code?.trim();
+    if (!incomingCode) {
+      // Check if submitted variants or existing variants have a code (e.g. P-1039-S12-C28 -> P-1039)
+      if (dto.variants && dto.variants.length > 0) {
+        for (const v of dto.variants) {
+          const extracted = this.extractProductCodeFromSku(v.sku);
+          if (extracted) {
+            incomingCode = extracted;
+            break;
+          }
+        }
+      }
+      if (!incomingCode && product.variants?.length > 0) {
+        for (const v of product.variants) {
+          const extracted = this.extractProductCodeFromSku(v.sku);
+          if (extracted) {
+            incomingCode = extracted;
+            break;
+          }
+        }
+      }
+      if (!incomingCode) {
+        incomingCode = product.product_code || undefined;
+      }
+    }
+
+    if (incomingCode && incomingCode !== product.product_code) {
       const existing = await this.prisma.products.findFirst({
         where: {
           product_code: incomingCode,
@@ -390,7 +469,7 @@ export class ProductsService {
       const updated = await tx.products.update({
         where: { id },
         data: {
-          product_code: incomingCode !== undefined ? incomingCode : undefined,
+          product_code: incomingCode || product.product_code,
           name: dto.name,
           slug: dto.slug,
           description: dto.description,
@@ -1114,7 +1193,7 @@ export class ProductsService {
 
       return {
         id: prod.id,
-        product_code: prod.product_code,
+        product_code: this.resolveProductCode(prod.product_code, prod.variants),
         name: prod.name,
         slug: prod.slug,
         description: prod.description,
@@ -1528,6 +1607,7 @@ export class ProductsService {
 
       return {
         id: prod.id,
+        product_code: this.resolveProductCode(prod.product_code, prod.variants),
         name: prod.name,
         slug: prod.slug,
         description: prod.description,
@@ -1571,7 +1651,7 @@ export class ProductsService {
 
     return {
       id: product.id,
-      product_code: product.product_code,
+      product_code: this.resolveProductCode(product.product_code, product.variants),
       name: product.name,
       slug: product.slug,
       description: product.description,
