@@ -11,11 +11,10 @@ export class NotificationsController {
   @Get()
   async getNotifications(
     @Query('unread_only') unreadOnly?: string,
-    @Query('limit') limit?: string,
   ) {
     return this.notificationsService.findAll({
       unreadOnly: unreadOnly === 'true',
-      limit: limit ? Number(limit) : 50,
+      limit: 50,
     });
   }
 

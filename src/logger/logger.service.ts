@@ -295,7 +295,7 @@ export class LoggerService implements INestLoggerService {
         total,
         page,
         limit,
-        totalPages: Math.ceil(total / limit) || 1,
+        total_pages: Math.ceil(total / limit) || 1,
       },
     };
   }
@@ -883,7 +883,7 @@ export class LoggerService implements INestLoggerService {
       total,
       page,
       limit,
-      totalPages: Math.ceil(total / limit) || 1,
+      total_pages: Math.ceil(total / limit) || 1,
     };
   }
 
@@ -946,7 +946,7 @@ export class LoggerService implements INestLoggerService {
       total,
       page,
       limit,
-      totalPages: Math.ceil(total / limit) || 1,
+      total_pages: Math.ceil(total / limit) || 1,
     };
   }
 

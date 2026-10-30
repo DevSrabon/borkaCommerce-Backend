@@ -535,7 +535,7 @@ export class MailService implements OnModuleInit, OnModuleDestroy {
       total,
       page,
       limit,
-      totalPages: Math.ceil(total / limit) || 1,
+      total_pages: Math.ceil(total / limit) || 1,
     };
   }
 

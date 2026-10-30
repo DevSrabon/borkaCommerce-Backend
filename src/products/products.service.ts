@@ -1227,14 +1227,31 @@ export class ProductsService {
     });
 
     const finalResult = onSale ? mappedProducts.filter((p) => p.on_sale) : mappedProducts;
+    const total = finalResult.length;
 
-    if (limitNum !== undefined && limitNum > 0) {
+    const effectiveLimit = limitNum !== undefined && limitNum > 0 ? limitNum : (pageNum ? 50 : undefined);
+    if (effectiveLimit !== undefined && effectiveLimit > 0) {
       const effectivePage = pageNum && pageNum > 0 ? pageNum : 1;
-      const start = (effectivePage - 1) * limitNum;
-      return finalResult.slice(start, start + limitNum);
+      const start = (effectivePage - 1) * effectiveLimit;
+      const paginated = finalResult.slice(start, start + effectiveLimit);
+      return {
+        items: paginated,
+        total,
+        page: effectivePage,
+        limit: effectiveLimit,
+        skip: start,
+        total_pages: Math.max(1, Math.ceil(total / effectiveLimit)),
+      };
     }
 
-    return finalResult;
+    return {
+      items: finalResult,
+      total,
+      page: 1,
+      limit: total || 50,
+      skip: 0,
+      total_pages: 1,
+    };
   }
 
   async findOneStorefront(slug: string) {

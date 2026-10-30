@@ -31,7 +31,6 @@ export class LoggerController {
     @Query('sort') sort?: string,
     @Query('most_expensive') mostExpensive?: string,
     @Query('page') page?: string,
-    @Query('limit') limit?: string,
   ) {
     return this.loggerService.getLogs({
       search,
@@ -43,7 +42,7 @@ export class LoggerController {
       sort,
       mostExpensive: mostExpensive === 'true',
       page: page ? parseInt(page, 10) : 1,
-      limit: limit ? parseInt(limit, 10) : 25,
+      limit: 25,
     });
   }
 
@@ -56,7 +55,6 @@ export class LoggerController {
   @Get('audit')
   async getAuditLogs(
     @Query('page') page?: string,
-    @Query('limit') limit?: string,
     @Query('action') action?: string,
     @Query('method') method?: string,
     @Query('entity') entity?: string,
@@ -64,7 +62,7 @@ export class LoggerController {
   ) {
     return this.loggerService.getAuditLogs({
       page: page ? parseInt(page, 10) : 1,
-      limit: limit ? parseInt(limit, 10) : 25,
+      limit: 25,
       action,
       method,
       entity,
@@ -90,13 +88,12 @@ export class LoggerController {
   @Get('emails')
   async getEmailLogs(
     @Query('page') page?: string,
-    @Query('limit') limit?: string,
     @Query('status') status?: string,
     @Query('search') search?: string,
   ) {
     return this.mailService.getEmailLogs({
       page: page ? parseInt(page, 10) : 1,
-      limit: limit ? parseInt(limit, 10) : 25,
+      limit: 25,
       status,
       search,
     });
@@ -116,14 +113,13 @@ export class LoggerController {
   @Get('stripe')
   async getStripeLogs(
     @Query('page') page?: string,
-    @Query('limit') limit?: string,
     @Query('status') status?: string,
     @Query('event_type') eventType?: string,
     @Query('search') search?: string,
   ) {
     return this.loggerService.getStripeLogs({
       page: page ? parseInt(page, 10) : 1,
-      limit: limit ? parseInt(limit, 10) : 25,
+      limit: 25,
       status,
       eventType,
       search,

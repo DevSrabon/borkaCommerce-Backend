@@ -292,7 +292,7 @@ export class InventoryService {
       total,
       page,
       limit: take || total,
-      totalPages: take ? Math.max(1, Math.ceil(total / take)) : 1,
+      total_pages: take ? Math.max(1, Math.ceil(total / take)) : 1,
       counts,
     };
   }

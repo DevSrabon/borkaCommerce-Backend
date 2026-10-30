@@ -12,17 +12,25 @@ export class AdminCustomersController {
 
   @Get()
   async findAll(
-    @Query('limit') limit?: string,
+    @Query('page') page?: string,
     @Query('skip') skip?: string,
     @Res({ passthrough: true }) res?: Response,
   ) {
-    const limitNum = limit ? parseInt(limit, 10) : 50;
-    const skipNum = skip ? parseInt(skip, 10) : 0;
+    const limitNum = 50;
+    const pageNum = page ? Math.max(1, parseInt(page, 10)) : (skip ? Math.floor(Math.max(0, parseInt(skip, 10)) / limitNum) + 1 : 1);
+    const skipNum = skip ? Math.max(0, parseInt(skip, 10)) : (pageNum - 1) * limitNum;
     const { items, total } = await this.authService.findAllCustomers(limitNum, skipNum);
     if (res) {
       res.setHeader('x-total-count', total.toString());
     }
-    return items;
+    return {
+      items,
+      total,
+      page: pageNum,
+      limit: limitNum,
+      skip: skipNum,
+      total_pages: Math.max(1, Math.ceil(total / limitNum)),
+    };
   }
 
   @Post('create-admin')

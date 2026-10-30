@@ -27,14 +27,13 @@ export class InventoryController {
   @Get('inventory')
   async getInventoryStatus(
     @Query('page') page?: string,
-    @Query('limit') limit?: string,
     @Query('skip') skip?: string,
     @Query('search') search?: string,
     @Query('status') status?: string,
     @Res({ passthrough: true }) res?: Response,
   ) {
     const pageNum = page ? Math.max(1, parseInt(page, 10)) : 1;
-    const limitNum = limit ? (limit === 'all' ? 0 : Math.max(1, parseInt(limit, 10))) : 25;
+    const limitNum = 25;
     const skipNum = skip ? parseInt(skip, 10) : undefined;
     const result = await this.inventoryService.getInventoryStatus({
       page: pageNum,
@@ -51,17 +50,25 @@ export class InventoryController {
 
   @Get('inventory/transactions')
   async getTransactions(
+    @Query('page') page?: string,
     @Query('variant_id') variantId?: string,
-    @Query('limit') limit?: string,
     @Query('skip') skip?: string,
     @Res({ passthrough: true }) res?: Response,
   ) {
-    const limitNum = limit ? parseInt(limit, 10) : 50;
-    const skipNum = skip ? parseInt(skip, 10) : 0;
+    const limitNum = 50;
+    const pageNum = page ? Math.max(1, parseInt(page, 10)) : (skip ? Math.floor(Math.max(0, parseInt(skip, 10)) / limitNum) + 1 : 1);
+    const skipNum = skip ? Math.max(0, parseInt(skip, 10)) : (pageNum - 1) * limitNum;
     const { items, total } = await this.inventoryService.getTransactions(variantId, limitNum, skipNum);
     if (res) {
       res.setHeader('x-total-count', total.toString());
     }
-    return items;
+    return {
+      items,
+      total,
+      page: pageNum,
+      limit: limitNum,
+      skip: skipNum,
+      total_pages: Math.max(1, Math.ceil(total / limitNum)),
+    };
   }
 }

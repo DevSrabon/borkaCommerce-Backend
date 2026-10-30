@@ -39,15 +39,13 @@ export class BlogsController {
   }
 
   @Get('blogs/latest')
-  async getLatestBlogs(@Query('limit') limit?: string) {
-    const lim = limit ? parseInt(limit, 10) : 5;
-    return this.blogsService.getLatestBlogs(lim);
+  async getLatestBlogs() {
+    return this.blogsService.getLatestBlogs(5);
   }
 
   @Get('blogs/popular')
-  async getPopularBlogs(@Query('limit') limit?: string) {
-    const lim = limit ? parseInt(limit, 10) : 5;
-    return this.blogsService.getPopularBlogs(lim);
+  async getPopularBlogs() {
+    return this.blogsService.getPopularBlogs(5);
   }
 
   @Get('blogs/categories')
