@@ -187,7 +187,7 @@ export class AppService {
     <div class="meta-grid">
       <div class="meta-card">
         <div class="meta-label">Environment</div>
-        <div class="meta-value">Production v1.0.1</div>
+        <div class="meta-value">Production v1.0.0</div>
       </div>
       <div class="meta-card">
         <div class="meta-label">Status Check</div>
