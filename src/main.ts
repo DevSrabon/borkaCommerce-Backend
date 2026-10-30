@@ -18,7 +18,7 @@ async function bootstrap() {
   expressApp.set('trust proxy', true);
 
   // Ensure uploads folder and sub-folders exist
-  const uploadsPath = path.join(process.cwd(), 'uploads');
+  const uploadsPath = process.env.UPLOADS_PATH || path.join(process.cwd(), 'uploads');
   const subFolders = [
     'media', 'product', 'customer', 'banner', 'category', 'chat', 'blog',
     'product_files', 'product_category', 'banner_files', 'blog_files', 'website_settings_files', 'ecommerce_files'
@@ -30,6 +30,18 @@ async function bootstrap() {
   // Serve static uploaded files (covers all sub-folders automatically)
   app.use('/uploads', express.static(uploadsPath));
   app.use('/saba-media', express.static(uploadsPath));
+
+  // Explicit handler when an uploaded file is not found on disk (avoids confusing 'route not found' error)
+  app.use(['/uploads', '/saba-media'], (req: express.Request, res: express.Response) => {
+    res.status(404).json({
+      success: false,
+      message: `File not found on disk: uploads${req.path}`,
+      data: null,
+      meta: null,
+      status_code: 404,
+      error: 'FileNotFound',
+    });
+  });
 
   // Increase payload size limit to prevent "request entity too large" errors (50MB)
   app.use(express.json({ limit: '50mb' }));
