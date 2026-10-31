@@ -259,12 +259,14 @@ export class ProductsController {
     @Query('search') search?: string,
     @Query('on_sale') onSale?: string,
     @Query('page') page?: string,
+    @Query('limit') limit?: string,
     @Query('skip') skip?: string,
   ) {
     const featured = isFeatured === 'true' ? true : isFeatured === 'false' ? false : undefined;
     const saleOnly = onSale === 'true';
-    const pageNum = page ? parseInt(page, 10) : (skip ? Math.floor(Math.max(0, parseInt(skip, 10)) / 50) + 1 : undefined);
-    return this.productsService.findAllStorefront(categoryId, featured, search, saleOnly, pageNum);
+    const limitNum = limit ? parseInt(limit, 10) : undefined;
+    const pageNum = page ? parseInt(page, 10) : (skip && limitNum ? Math.floor(Math.max(0, parseInt(skip, 10)) / limitNum) + 1 : undefined);
+    return this.productsService.findAllStorefront(categoryId, featured, search, saleOnly, pageNum, limitNum);
   }
 
   @Get('ecommerce/products/slug/:slug')
