@@ -104,6 +104,9 @@ export class SiteSettingsService implements OnModuleInit {
     // Flash Sale Spotlight Configuration
     flash_sale_enabled: 'true',
 
+    // Popular Search Suggestions (comma-separated; admin-configurable from settings panel)
+    popular_searches: '',
+
     // Tracking & Analytics
     google_analytics_id: process.env.GOOGLE_ANALYTICS_ID || process.env.NEXT_PUBLIC_GA_ID || '',
     facebook_pixel_id: process.env.FACEBOOK_PIXEL_ID || process.env.NEXT_PUBLIC_FB_PIXEL_ID || '',
@@ -355,6 +358,7 @@ export class SiteSettingsService implements OnModuleInit {
     'seo_title',
     'seo_description',
     'seo_keywords',
+    'popular_searches',
     'shipping_base_fee',
     'free_shipping_threshold',
     'shipping_discount_min_order',

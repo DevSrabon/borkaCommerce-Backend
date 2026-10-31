@@ -981,10 +981,27 @@ export class ProductsService {
     return descendantIds;
   }
 
-  // ─── Popular Search Suggestions (derived from real DB data) ──────────────
+  // ─── Popular Search Suggestions ───────────────────────────────────────────
   async getPopularSearchSuggestions(limit = 12): Promise<string[]> {
     try {
-      // 1. Top categories by published product count
+      // 1. Check if admin configured explicit popular searches in site_settings
+      const setting = await this.prisma.site_settings.findUnique({
+        where: { key: 'popular_searches' },
+      });
+
+      if (setting && setting.value && setting.value.trim()) {
+        // Admin-configured: parse comma-separated list
+        const adminTerms = setting.value
+          .split(',')
+          .map((t) => t.trim())
+          .filter((t) => t.length >= 1);
+
+        if (adminTerms.length > 0) {
+          return adminTerms.slice(0, limit);
+        }
+      }
+
+      // 2. Fall back: derive from top categories by product count
       const categories = await this.prisma.categories.findMany({
         where: {
           product_categories: {
@@ -1005,7 +1022,7 @@ export class ProductsService {
         .map((c) => c.name.trim())
         .filter((n) => n.length >= 2 && n.length <= 40);
 
-      // 2. Unique tags from published products (tags stored as comma-separated string)
+      // 3. Unique tags from published products (tags stored as comma-separated string)
       const productsWithTags = await this.prisma.products.findMany({
         where: {
           status: product_status.PUBLISHED,
@@ -1042,6 +1059,7 @@ export class ProductsService {
       return [];
     }
   }
+
 
   async findAllStorefront(
     categoryId?: string,
