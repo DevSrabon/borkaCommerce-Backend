@@ -981,6 +981,68 @@ export class ProductsService {
     return descendantIds;
   }
 
+  // ─── Popular Search Suggestions (derived from real DB data) ──────────────
+  async getPopularSearchSuggestions(limit = 12): Promise<string[]> {
+    try {
+      // 1. Top categories by published product count
+      const categories = await this.prisma.categories.findMany({
+        where: {
+          product_categories: {
+            some: {
+              product: { status: product_status.PUBLISHED, deleted_at: null },
+            },
+          },
+        },
+        select: {
+          name: true,
+          _count: { select: { product_categories: true } },
+        },
+        orderBy: { product_categories: { _count: 'desc' } },
+        take: 20,
+      });
+
+      const catNames = categories
+        .map((c) => c.name.trim())
+        .filter((n) => n.length >= 2 && n.length <= 40);
+
+      // 2. Unique tags from published products (tags stored as comma-separated string)
+      const productsWithTags = await this.prisma.products.findMany({
+        where: {
+          status: product_status.PUBLISHED,
+          deleted_at: null,
+          tags: { not: null },
+        },
+        select: { tags: true },
+        take: 200,
+      });
+
+      const tagSet = new Set<string>();
+      for (const p of productsWithTags) {
+        if (!p.tags) continue;
+        for (const tag of p.tags.split(/[,;|]/)) {
+          const t = tag.trim();
+          if (t.length >= 2 && t.length <= 40) tagSet.add(t);
+        }
+      }
+
+      // Merge: categories first (more relevant), then tags; deduplicate case-insensitively
+      const seen = new Set<string>();
+      const result: string[] = [];
+      for (const term of [...catNames, ...Array.from(tagSet)]) {
+        const key = term.toLowerCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          result.push(term);
+          if (result.length >= limit) break;
+        }
+      }
+
+      return result;
+    } catch {
+      return [];
+    }
+  }
+
   async findAllStorefront(
     categoryId?: string,
     isFeatured?: boolean,

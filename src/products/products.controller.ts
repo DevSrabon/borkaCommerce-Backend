@@ -269,6 +269,12 @@ export class ProductsController {
     return this.productsService.findAllStorefront(categoryId, featured, search, saleOnly, pageNum, limitNum);
   }
 
+  @Get('ecommerce/popular-searches')
+  getPopularSearchSuggestions(@Query('limit') limit?: string) {
+    const limitNum = limit ? Math.min(parseInt(limit, 10), 30) : 12;
+    return this.productsService.getPopularSearchSuggestions(limitNum);
+  }
+
   @Get('ecommerce/products/slug/:slug')
   findOneStorefront(@Param('slug') slug: string) {
     return this.productsService.findOneStorefront(slug);
