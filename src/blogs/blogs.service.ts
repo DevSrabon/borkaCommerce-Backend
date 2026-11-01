@@ -496,7 +496,7 @@ export class BlogsService implements OnModuleInit {
       finalSlug = `${finalSlug}-${Date.now().toString().slice(-4)}`;
     }
 
-    return this.prisma.blogs.create({
+    const createdBlog = await this.prisma.blogs.create({
       data: {
         title: dto.title.trim(),
         slug: finalSlug,
@@ -510,6 +510,9 @@ export class BlogsService implements OnModuleInit {
         published_at: dto.published_at ? new Date(dto.published_at) : new Date(),
       },
     });
+
+    await this.markImagesUsed([dto.featured_image, dto.main_image], `blog:${createdBlog.id}`);
+    return createdBlog;
   }
 
   async adminUpdateBlog(id: string, dto: UpdateBlogDto) {
@@ -539,10 +542,13 @@ export class BlogsService implements OnModuleInit {
     if (dto.is_published !== undefined) data.is_published = dto.is_published;
     if (dto.published_at !== undefined) data.published_at = new Date(dto.published_at);
 
-    return this.prisma.blogs.update({
+    const updatedBlog = await this.prisma.blogs.update({
       where: { id },
       data,
     });
+
+    await this.markImagesUsed([dto.featured_image, dto.main_image], `blog:${id}`);
+    return updatedBlog;
   }
 
   async adminDeleteBlog(id: string) {
@@ -604,5 +610,41 @@ export class BlogsService implements OnModuleInit {
       throw new NotFoundException(`Comment #${commentId} not found`);
     }
     return this.prisma.blog_comments.delete({ where: { id: commentId } });
+  }
+
+  private async markImagesUsed(urls: (string | null | undefined)[], usedIn: string) {
+    if (!urls || urls.length === 0) return;
+    try {
+      const values = new Set<string>();
+      const filenames = new Set<string>();
+      for (const raw of urls) {
+        if (!raw || typeof raw !== 'string') continue;
+        const trimmed = raw.trim();
+        if (!trimmed) continue;
+        values.add(trimmed);
+        const clean = trimmed.split('?')[0].split('#')[0];
+        const fn = clean.split('/').pop();
+        if (fn && fn.includes('.')) {
+          filenames.add(fn.toLowerCase());
+        }
+      }
+      if (values.size === 0 && filenames.size === 0) return;
+
+      const orConditions: any[] = [];
+      if (values.size > 0) {
+        const arr = Array.from(values);
+        orConditions.push({ image_url: { in: arr } });
+        orConditions.push({ image_path: { in: arr } });
+      }
+      if (filenames.size > 0) {
+        const arr = Array.from(filenames);
+        orConditions.push({ filename: { in: arr } });
+      }
+
+      await (this.prisma as any).uploaded_images.updateMany({
+        where: { OR: orConditions },
+        data: { status: 'used', used_in: usedIn, used_at: new Date() },
+      });
+    } catch (_) {}
   }
 }

@@ -2,8 +2,9 @@ import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/c
 import { basename, join, normalize, relative, extname } from 'path';
 import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
+import { randomUUID } from 'crypto';
 import { v2 as cloudinary } from 'cloudinary';
-import { S3Client, PutObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { UploadFolder, uploadFolders } from './image-upload.middleware';
 import { PrismaService } from '../database/prisma.service';
 import { SiteSettingsService } from '../site-settings/site-settings.service';
@@ -257,7 +258,7 @@ export class UploadFilesService implements OnModuleInit {
             : `https://${bucketName}.${accountId}.r2.cloudflarestorage.com`;
           const finalUrl = `${domain}/${key}`;
 
-          return {
+          const r2Result = {
             imageUrl: finalUrl,
             imagePath: finalUrl,
             storage: 'r2',
@@ -266,6 +267,15 @@ export class UploadFilesService implements OnModuleInit {
             compressedSize: compRes.compressedSize,
             savings: compRes.savings,
           };
+          await this.recordUploadedImage({
+            filename,
+            folder,
+            imageUrl: r2Result.imageUrl,
+            imagePath: r2Result.imagePath,
+            storage: r2Result.storage,
+            sizeBytes: compRes.compressedSize || compRes.originalSize || 0,
+          });
+          return r2Result;
         } catch (err: any) {
           this.logger.error(`Cloudflare R2 upload failed: ${err.message}. Falling back to local.`);
         }
@@ -315,7 +325,7 @@ export class UploadFilesService implements OnModuleInit {
             : `https://${bucketName}.s3.${region}.amazonaws.com`;
           const finalUrl = `${domain}/${key}`;
 
-          return {
+          const s3Result = {
             imageUrl: finalUrl,
             imagePath: finalUrl,
             storage: 's3',
@@ -324,6 +334,15 @@ export class UploadFilesService implements OnModuleInit {
             compressedSize: compRes.compressedSize,
             savings: compRes.savings,
           };
+          await this.recordUploadedImage({
+            filename,
+            folder,
+            imageUrl: s3Result.imageUrl,
+            imagePath: s3Result.imagePath,
+            storage: s3Result.storage,
+            sizeBytes: compRes.compressedSize || compRes.originalSize || 0,
+          });
+          return s3Result;
         } catch (err: any) {
           this.logger.error(`AWS S3 upload failed: ${err.message}. Falling back to local.`);
         }
@@ -365,7 +384,7 @@ export class UploadFilesService implements OnModuleInit {
             await fs.unlink(localFilePath);
           } catch (_) {}
 
-          return {
+          const cloudResult = {
             imageUrl: uploadResult.secure_url,
             imagePath: uploadResult.secure_url,
             storage: 'cloudinary',
@@ -374,6 +393,15 @@ export class UploadFilesService implements OnModuleInit {
             compressedSize: compRes.compressedSize,
             savings: compRes.savings,
           };
+          await this.recordUploadedImage({
+            filename,
+            folder,
+            imageUrl: cloudResult.imageUrl,
+            imagePath: cloudResult.imagePath,
+            storage: cloudResult.storage,
+            sizeBytes: compRes.compressedSize || compRes.originalSize || 0,
+          });
+          return cloudResult;
         } catch (err: any) {
           this.logger.error(`Cloudinary upload failed: ${err.message}. Falling back to local storage.`);
         }
@@ -382,7 +410,7 @@ export class UploadFilesService implements OnModuleInit {
 
     // 4. LOCAL DISK STORAGE (Default)
     const relPath = this.relativePath(folder, filename);
-    return {
+    const localResult = {
       imageUrl: this.imageUrl(relPath, fallbackBase),
       imagePath: relPath,
       storage: 'local',
@@ -391,6 +419,15 @@ export class UploadFilesService implements OnModuleInit {
       compressedSize: compRes.compressedSize,
       savings: compRes.savings,
     };
+    await this.recordUploadedImage({
+      filename,
+      folder,
+      imageUrl: localResult.imageUrl,
+      imagePath: localResult.imagePath,
+      storage: localResult.storage,
+      sizeBytes: compRes.compressedSize || compRes.originalSize || 0,
+    });
+    return localResult;
   }
 
   /**
@@ -858,24 +895,31 @@ export class UploadFilesService implements OnModuleInit {
   }
 
   onModuleInit() {
-    // Run automated orphan cleanup once every 24 hours (with a 2-hour grace period)
+    // Run automated unused & orphan cleanup once every 24 hours (with a 2-hour grace period)
     const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
-    // Initial delay of 5 minutes after server start
+    // Initial delay of 2 minutes after server start
     setTimeout(() => {
       this.runAutomatedCleanup();
       setInterval(() => {
         this.runAutomatedCleanup();
       }, TWENTY_FOUR_HOURS);
-    }, 5 * 60 * 1000);
+    }, 2 * 60 * 1000);
   }
 
   private async runAutomatedCleanup() {
     try {
-      this.logger.log('Starting automated orphan uploads cleanup...');
-      const res = await this.cleanupOrphanFiles(false, 2);
-      this.logger.log(`Automated cleanup done: removed ${res.deletedCount} orphan files, freed ${res.freedFormatted}`);
+      this.logger.log('Starting automated cleanup of unused uploaded images and orphan files...');
+      const trackerRes = await this.cleanupUnusedImages(2, false);
+      this.logger.log(
+        `Automated unused images cleanup done: removed ${trackerRes.deletedCount} unused files, freed ${trackerRes.freedFormatted}`,
+      );
+
+      const orphanRes = await this.cleanupOrphanFiles(false, 2);
+      this.logger.log(
+        `Automated orphan files cleanup done: removed ${orphanRes.deletedCount} orphan files, freed ${orphanRes.freedFormatted}`,
+      );
     } catch (err: any) {
-      this.logger.error(`Automated orphan cleanup error: ${err.message}`);
+      this.logger.error(`Automated cleanup error: ${err.message}`);
     }
   }
 
@@ -1004,5 +1048,420 @@ export class UploadFilesService implements OnModuleInit {
       dryRun,
       orphanSample: orphanList.slice(0, 30),
     };
+  }
+
+  /**
+   * Records newly uploaded image metadata into uploaded_images with status 'unused'.
+   */
+  async recordUploadedImage(params: {
+    filename: string;
+    folder: string;
+    imageUrl: string;
+    imagePath?: string | null;
+    storage: string;
+    sizeBytes?: number;
+    mimeType?: string;
+  }) {
+    try {
+      const cleanFilename = basename(params.filename || params.imageUrl || '');
+      await (this.prisma as any).uploaded_images.create({
+        data: {
+          id: randomUUID(),
+          filename: cleanFilename,
+          folder: params.folder || 'media',
+          image_url: params.imageUrl,
+          image_path: params.imagePath || params.imageUrl,
+          storage: params.storage || 'local',
+          status: 'unused',
+          size_bytes: params.sizeBytes || null,
+          mime_type: params.mimeType || null,
+        },
+      });
+      this.logger.log(
+        `[UploadTracker] Recorded upload: ${cleanFilename} (status: unused, storage: ${params.storage || 'local'})`,
+      );
+    } catch (err: any) {
+      this.logger.warn(`[UploadTracker] Could not record upload in uploaded_images: ${err.message}`);
+    }
+  }
+
+  /**
+   * Marks given image URLs or filenames as 'used' in uploaded_images.
+   */
+  async markImagesAsUsed(urlsOrFilenames: (string | null | undefined)[], usedIn: string) {
+    if (!urlsOrFilenames || urlsOrFilenames.length === 0) return 0;
+    try {
+      const cleanedValues = new Set<string>();
+      const filenames = new Set<string>();
+
+      for (const raw of urlsOrFilenames) {
+        if (!raw || typeof raw !== 'string') continue;
+        const trimmed = raw.trim();
+        if (!trimmed) continue;
+        cleanedValues.add(trimmed);
+
+        const noQuery = trimmed.split('?')[0].split('#')[0];
+        const fn = basename(noQuery);
+        if (fn && fn.includes('.')) {
+          filenames.add(fn.toLowerCase());
+        }
+      }
+
+      if (cleanedValues.size === 0 && filenames.size === 0) return 0;
+
+      const orConditions: any[] = [];
+      if (cleanedValues.size > 0) {
+        const valArr = Array.from(cleanedValues);
+        orConditions.push({ image_url: { in: valArr } });
+        orConditions.push({ image_path: { in: valArr } });
+      }
+      if (filenames.size > 0) {
+        const fnArr = Array.from(filenames);
+        orConditions.push({ filename: { in: fnArr } });
+      }
+
+      const res = await (this.prisma as any).uploaded_images.updateMany({
+        where: {
+          OR: orConditions,
+        },
+        data: {
+          status: 'used',
+          used_in: usedIn,
+          used_at: new Date(),
+        },
+      });
+
+      if (res.count > 0) {
+        this.logger.log(`[UploadTracker] Marked ${res.count} image(s) as 'used' for '${usedIn}'`);
+      }
+      return res.count;
+    } catch (err: any) {
+      this.logger.warn(`[UploadTracker] Failed to mark images as used: ${err.message}`);
+      return 0;
+    }
+  }
+
+  /**
+   * Scans active entities across the entire database (products, variants, banners, categories, blogs, settings, customers)
+   * and updates corresponding records in uploaded_images to 'used'.
+   * Ensures that actively displayed images are NEVER deleted by cleanup.
+   */
+  async syncUsedImagesFromDatabase() {
+    this.logger.log('[UploadTracker] Syncing active database image references into uploaded_images...');
+    const allReferenced = new Set<string>();
+    const allFilenames = new Set<string>();
+
+    const addRef = (val?: string | null) => {
+      if (!val || typeof val !== 'string') return;
+      const trimmed = val.trim();
+      if (!trimmed) return;
+      allReferenced.add(trimmed);
+
+      const noQuery = trimmed.split('?')[0].split('#')[0];
+      const fn = basename(noQuery);
+      if (fn && fn.includes('.')) {
+        allFilenames.add(fn.toLowerCase());
+      }
+    };
+
+    try {
+      // 1. Product Images
+      const prodImages = await this.prisma.product_images.findMany({ select: { image_url: true } });
+      prodImages.forEach((img) => addRef(img.image_url));
+
+      // 2. Variant Images
+      const varImages = await this.prisma.variant_images.findMany({ select: { image: true } });
+      varImages.forEach((img) => addRef(img.image));
+
+      // 3. Banners
+      const banners = await this.prisma.banners.findMany({ select: { image_url: true, mobile_image_url: true } });
+      banners.forEach((b) => {
+        addRef(b.image_url);
+        addRef(b.mobile_image_url);
+      });
+
+      // 4. Categories
+      const categories = await this.prisma.categories.findMany({ select: { image: true } });
+      categories.forEach((c) => addRef(c.image));
+
+      // 5. Blogs
+      const blogs = await this.prisma.blogs.findMany({
+        select: { featured_image: true, main_image: true, content: true },
+      });
+      blogs.forEach((b) => {
+        addRef(b.featured_image);
+        addRef(b.main_image);
+        if (b.content) {
+          const matches = b.content.match(/[\w-]+\.(webp|jpg|jpeg|png|gif|svg|avif)/gi);
+          if (matches) matches.forEach((m) => allFilenames.add(m.toLowerCase()));
+        }
+      });
+
+      // 6. Site Settings
+      const settings = await this.prisma.site_settings.findMany({ select: { value: true } });
+      settings.forEach((s) => {
+        if (s.value && /\.(webp|jpg|jpeg|png|gif|svg|avif|ico)/i.test(s.value)) {
+          addRef(s.value);
+        }
+      });
+
+      // 7. Customer avatars
+      const customers = await this.prisma.customers.findMany({ select: { avatar_url: true } });
+      customers.forEach((c) => addRef(c.avatar_url));
+
+      if (allReferenced.size === 0 && allFilenames.size === 0) {
+        return { syncedCount: 0 };
+      }
+
+      const orConditions: any[] = [];
+      if (allReferenced.size > 0) {
+        const refArr = Array.from(allReferenced);
+        orConditions.push({ image_url: { in: refArr } });
+        orConditions.push({ image_path: { in: refArr } });
+      }
+      if (allFilenames.size > 0) {
+        const fnArr = Array.from(allFilenames);
+        orConditions.push({ filename: { in: fnArr } });
+      }
+
+      const result = await (this.prisma as any).uploaded_images.updateMany({
+        where: {
+          status: 'unused',
+          OR: orConditions,
+        },
+        data: {
+          status: 'used',
+          used_in: 'DATABASE_SYNC',
+          used_at: new Date(),
+        },
+      });
+
+      this.logger.log(`[UploadTracker] Sync completed: marked ${result.count} images as 'used'.`);
+      return { syncedCount: result.count, totalTrackedInDb: allReferenced.size };
+    } catch (err: any) {
+      this.logger.error(`[UploadTracker] Error syncing used images: ${err.message}`);
+      return { syncedCount: 0, error: err.message };
+    }
+  }
+
+  /**
+   * Deletes a file from physical or cloud storage based on storage driver.
+   */
+  async deleteFileFromStorage(image: {
+    storage: string;
+    folder: string;
+    filename: string;
+    image_path?: string | null;
+    image_url: string;
+  }) {
+    const storage = (image.storage || 'local').toLowerCase();
+    const folder = image.folder || 'media';
+    const filename = image.filename || basename(image.image_path || image.image_url);
+
+    // 1. LOCAL STORAGE
+    if (storage === 'local') {
+      const localPath = join(this.uploadsRoot, folder, filename);
+      try {
+        if (fsSync.existsSync(localPath)) {
+          await fs.unlink(localPath);
+          this.logger.log(`[UploadTracker] Deleted local file: ${localPath}`);
+        }
+      } catch (err: any) {
+        this.logger.warn(`[UploadTracker] Failed to delete local file ${localPath}: ${err.message}`);
+      }
+      return;
+    }
+
+    // 2. CLOUDINARY
+    if (storage === 'cloudinary') {
+      try {
+        const cloudName =
+          (await this.siteSettingsService.getSetting('CLOUDINARY_CLOUD_NAME')) ||
+          (await this.siteSettingsService.getSetting('cloudinary_cloud_name'));
+        const apiKey =
+          (await this.siteSettingsService.getSetting('CLOUDINARY_API_KEY')) ||
+          (await this.siteSettingsService.getSetting('cloudinary_api_key'));
+        const apiSecret =
+          (await this.siteSettingsService.getSetting('CLOUDINARY_API_SECRET')) ||
+          (await this.siteSettingsService.getSetting('cloudinary_api_secret'));
+
+        if (cloudName && apiKey && apiSecret) {
+          cloudinary.config({ cloud_name: cloudName, api_key: apiKey, api_secret: apiSecret, secure: true });
+
+          let publicId = '';
+          const url = image.image_url || image.image_path || '';
+          const uploadIdx = url.indexOf('/upload/');
+          if (uploadIdx !== -1) {
+            let afterUpload = url.substring(uploadIdx + 8);
+            if (afterUpload.startsWith('v') && /v\d+\//.test(afterUpload)) {
+              afterUpload = afterUpload.replace(/v\d+\//, '');
+            }
+            const dotIdx = afterUpload.lastIndexOf('.');
+            publicId = dotIdx > 0 ? afterUpload.substring(0, dotIdx) : afterUpload;
+          } else {
+            const dotIdx = filename.lastIndexOf('.');
+            const nameWithoutExt = dotIdx > 0 ? filename.substring(0, dotIdx) : filename;
+            publicId = `${folder}/${nameWithoutExt}`;
+          }
+
+          if (publicId) {
+            await cloudinary.uploader.destroy(publicId, { invalidate: true });
+            this.logger.log(`[UploadTracker] Deleted Cloudinary asset: ${publicId}`);
+          }
+        }
+      } catch (err: any) {
+        this.logger.warn(`[UploadTracker] Cloudinary delete failed: ${err.message}`);
+      }
+      return;
+    }
+
+    // 3. CLOUDFLARE R2
+    if (storage === 'r2') {
+      try {
+        const accountId = await this.siteSettingsService.getSetting('R2_ACCOUNT_ID');
+        const accessKeyId = await this.siteSettingsService.getSetting('R2_ACCESS_KEY_ID');
+        const secretAccessKey = await this.siteSettingsService.getSetting('R2_SECRET_ACCESS_KEY');
+        const bucketName = await this.siteSettingsService.getSetting('R2_BUCKET_NAME');
+
+        if (accountId && accessKeyId && secretAccessKey && bucketName) {
+          const s3 = new S3Client({
+            region: 'auto',
+            endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+            credentials: { accessKeyId, secretAccessKey },
+          });
+          const key = `${folder}/${filename}`;
+          await s3.send(new DeleteObjectCommand({ Bucket: bucketName, Key: key }));
+          this.logger.log(`[UploadTracker] Deleted Cloudflare R2 object: ${key}`);
+        }
+      } catch (err: any) {
+        this.logger.warn(`[UploadTracker] Cloudflare R2 delete failed: ${err.message}`);
+      }
+      return;
+    }
+
+    // 4. AWS S3
+    if (storage === 's3') {
+      try {
+        const region = (await this.siteSettingsService.getSetting('AWS_S3_REGION')) || 'me-central-1';
+        const accessKeyId = await this.siteSettingsService.getSetting('AWS_S3_ACCESS_KEY_ID');
+        const secretAccessKey = await this.siteSettingsService.getSetting('AWS_S3_SECRET_ACCESS_KEY');
+        const bucketName = await this.siteSettingsService.getSetting('AWS_S3_BUCKET_NAME');
+
+        if (accessKeyId && secretAccessKey && bucketName) {
+          const s3 = new S3Client({ region, credentials: { accessKeyId, secretAccessKey } });
+          const key = `${folder}/${filename}`;
+          await s3.send(new DeleteObjectCommand({ Bucket: bucketName, Key: key }));
+          this.logger.log(`[UploadTracker] Deleted AWS S3 object: ${key}`);
+        }
+      } catch (err: any) {
+        this.logger.warn(`[UploadTracker] AWS S3 delete failed: ${err.message}`);
+      }
+      return;
+    }
+  }
+
+  /**
+   * Cleans up unused images from storage and deletes their record from uploaded_images.
+   * Only targets images that are marked 'unused' and older than gracePeriodHours (default: 2 hours).
+   */
+  async cleanupUnusedImages(gracePeriodHours = 2, dryRun = false) {
+    this.logger.log(
+      `[UploadTracker] Starting unused images cleanup (grace: ${gracePeriodHours}h, dryRun: ${dryRun})...`,
+    );
+
+    // 1. Sync database first to safeguard newly assigned images
+    await this.syncUsedImagesFromDatabase();
+
+    // 2. Find unused images older than gracePeriodHours
+    const cutoffDate = new Date(Date.now() - gracePeriodHours * 60 * 60 * 1000);
+
+    const unusedImages = await (this.prisma as any).uploaded_images.findMany({
+      where: {
+        status: 'unused',
+        created_at: { lte: cutoffDate },
+      },
+      orderBy: { created_at: 'asc' },
+    });
+
+    let deletedCount = 0;
+    let freedBytes = 0;
+    const deletedImages: any[] = [];
+
+    for (const img of unusedImages) {
+      freedBytes += img.size_bytes || 0;
+      deletedImages.push({
+        id: img.id,
+        filename: img.filename,
+        folder: img.folder,
+        storage: img.storage,
+        size_bytes: img.size_bytes,
+        created_at: img.created_at,
+      });
+
+      if (!dryRun) {
+        try {
+          // Delete from physical / cloud storage
+          await this.deleteFileFromStorage(img);
+          // Delete row from uploaded_images
+          await (this.prisma as any).uploaded_images.delete({ where: { id: img.id } });
+          deletedCount++;
+        } catch (err: any) {
+          this.logger.warn(
+            `[UploadTracker] Failed to delete unused image record ${img.id} (${img.filename}): ${err.message}`,
+          );
+        }
+      }
+    }
+
+    const formatBytes = (bytes: number) => {
+      if (bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    };
+
+    const result = {
+      success: true,
+      scannedUnusedCount: unusedImages.length,
+      deletedCount: dryRun ? 0 : deletedCount,
+      freedBytes,
+      freedFormatted: formatBytes(freedBytes),
+      dryRun,
+      gracePeriodHours,
+      sampleDeleted: deletedImages.slice(0, 50),
+    };
+
+    this.logger.log(
+      `[UploadTracker] Cleanup completed: ${unusedImages.length} unused images found, ${result.deletedCount} deleted, ${result.freedFormatted} freed.`,
+    );
+
+    return result;
+  }
+
+  /**
+   * Retrieves summary statistics for uploaded images (total, used, unused, storage distribution).
+   */
+  async getUploadedImagesStats() {
+    try {
+      const total = await (this.prisma as any).uploaded_images.count();
+      const used = await (this.prisma as any).uploaded_images.count({ where: { status: 'used' } });
+      const unused = await (this.prisma as any).uploaded_images.count({ where: { status: 'unused' } });
+
+      const breakdown = await (this.prisma as any).uploaded_images.groupBy({
+        by: ['storage', 'status'],
+        _count: { id: true },
+        _sum: { size_bytes: true },
+      });
+
+      return {
+        total,
+        used,
+        unused,
+        breakdown,
+      };
+    } catch (err: any) {
+      return { total: 0, used: 0, unused: 0, error: err.message };
+    }
   }
 }

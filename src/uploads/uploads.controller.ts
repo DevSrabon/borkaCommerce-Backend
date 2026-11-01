@@ -120,4 +120,53 @@ export class UploadsController {
     const hours = typeof graceHours === 'number' ? graceHours : 2;
     return this.uploadFilesService.cleanupOrphanFiles(false, hours);
   }
+
+  @Get('tracker-stats')
+  async getTrackerStats() {
+    return this.uploadFilesService.getUploadedImagesStats();
+  }
+
+  @Get('unused')
+  async getUnusedImages(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const pageNum = Math.max(1, parseInt(page || '1', 10) || 1);
+    const take = Math.min(100, Math.max(1, parseInt(limit || '20', 10) || 20));
+    const skip = (pageNum - 1) * take;
+
+    const [items, total] = await Promise.all([
+      (this.uploadFilesService as any).prisma.uploaded_images.findMany({
+        where: { status: 'unused' },
+        orderBy: { created_at: 'desc' },
+        skip,
+        take,
+      }),
+      (this.uploadFilesService as any).prisma.uploaded_images.count({
+        where: { status: 'unused' },
+      }),
+    ]);
+
+    return {
+      items,
+      total,
+      page: pageNum,
+      totalPages: Math.ceil(total / take),
+    };
+  }
+
+  @Post('sync-used')
+  async syncUsedImages() {
+    return this.uploadFilesService.syncUsedImagesFromDatabase();
+  }
+
+  @Post('cleanup-unused')
+  async cleanupUnused(
+    @Body('graceHours') graceHours?: number,
+    @Body('dryRun') dryRun?: boolean,
+  ) {
+    const hours = typeof graceHours === 'number' ? graceHours : 2;
+    return this.uploadFilesService.cleanupUnusedImages(hours, dryRun ?? false);
+  }
 }
+

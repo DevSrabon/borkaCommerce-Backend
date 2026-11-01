@@ -44,9 +44,13 @@ export class CategoriesService {
       }
     }
 
-    return this.prisma.categories.create({
+    const cat = await this.prisma.categories.create({
       data: createCategoryDto,
     });
+    if (createCategoryDto.image) {
+      await this.markImagesUsed([createCategoryDto.image], `category:${cat.id}`);
+    }
+    return cat;
   }
 
   async findAll(limit = 50, skip = 0) {
@@ -237,10 +241,50 @@ export class CategoriesService {
       }
     }
 
-    return this.prisma.categories.update({
+    const cat = await this.prisma.categories.update({
       where: { id },
       data: updateCategoryDto,
     });
+    if (updateCategoryDto.image) {
+      await this.markImagesUsed([updateCategoryDto.image], `category:${id}`);
+    }
+    return cat;
+  }
+
+  private async markImagesUsed(urls: (string | null | undefined)[], usedIn: string) {
+    if (!urls || urls.length === 0) return;
+    try {
+      const values = new Set<string>();
+      const filenames = new Set<string>();
+      for (const raw of urls) {
+        if (!raw || typeof raw !== 'string') continue;
+        const trimmed = raw.trim();
+        if (!trimmed) continue;
+        values.add(trimmed);
+        const clean = trimmed.split('?')[0].split('#')[0];
+        const fn = clean.split('/').pop();
+        if (fn && fn.includes('.')) {
+          filenames.add(fn.toLowerCase());
+        }
+      }
+      if (values.size === 0 && filenames.size === 0) return;
+
+      const orConditions: any[] = [];
+      if (values.size > 0) {
+        const arr = Array.from(values);
+        orConditions.push({ image_url: { in: arr } });
+        orConditions.push({ image_path: { in: arr } });
+      }
+      if (filenames.size > 0) {
+        const arr = Array.from(filenames);
+        orConditions.push({ filename: { in: arr } });
+      }
+
+      await (this.prisma as any).uploaded_images.updateMany({
+        where: { OR: orConditions },
+        data: { status: 'used', used_in: usedIn, used_at: new Date() },
+      });
+    } catch (_) {}
   }
 
   private async getDescendantIds(id: string): Promise<string[]> {

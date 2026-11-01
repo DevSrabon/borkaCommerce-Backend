@@ -93,7 +93,7 @@ export class ProductsService {
     }
 
     // Run within a transaction to ensure database consistency
-    return this.prisma.$transaction(async (tx) => {
+    const createdProduct = await this.prisma.$transaction(async (tx) => {
       // 1. Create the Product
       const product = await tx.products.create({
         data: {
@@ -256,6 +256,26 @@ export class ProductsService {
 
       return product;
     });
+
+    // Mark images as used in uploaded_images tracker
+    try {
+      const usedImages: string[] = [];
+      if (dto.images) {
+        usedImages.push(...dto.images.map((i) => i.image_url));
+      }
+      if (dto.variants) {
+        for (const v of dto.variants) {
+          if (v.images) {
+            usedImages.push(...v.images.map((img) => this.variantImageUrl(img)));
+          }
+        }
+      }
+      if (usedImages.length > 0) {
+        await this.uploadFilesService.markImagesAsUsed(usedImages, `product:${createdProduct.id}`);
+      }
+    } catch (_) {}
+
+    return createdProduct;
   }
 
   async findAllAdmin(
@@ -732,6 +752,24 @@ export class ProductsService {
     });
 
     await Promise.all(deletedImagePaths.map((imageUrl) => this.removeUploadedProductImage(imageUrl)));
+
+    // Mark active images as used in uploaded_images tracker
+    try {
+      const usedImages: string[] = [];
+      if (dto.images) {
+        usedImages.push(...dto.images.map((i) => i.image_url));
+      }
+      if (dto.variants) {
+        for (const v of dto.variants) {
+          if (v.images) {
+            usedImages.push(...v.images.map((img) => this.variantImageUrl(img)));
+          }
+        }
+      }
+      if (usedImages.length > 0) {
+        await this.uploadFilesService.markImagesAsUsed(usedImages, `product:${id}`);
+      }
+    } catch (_) {}
 
     if (dto.notify_customers && updated) {
       try {

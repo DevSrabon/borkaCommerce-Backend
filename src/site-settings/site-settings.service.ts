@@ -300,12 +300,14 @@ export class SiteSettingsService implements OnModuleInit {
     is_active?: boolean;
     sort_order?: number;
   }) {
-    return this.prisma.banners.create({
+    const banner = await this.prisma.banners.create({
       data: {
         ...dto,
         title: dto.title || '',
       },
     });
+    await this.markImagesUsed([dto.image_url, dto.mobile_image_url], `banner:${banner.id}`);
+    return banner;
   }
 
   async updateBanner(
@@ -322,13 +324,54 @@ export class SiteSettingsService implements OnModuleInit {
       size_description: string;
       is_active: boolean;
       sort_order: number;
-    }>
+    }>,
   ) {
-    return this.prisma.banners.update({ where: { id }, data: dto });
+    const banner = await this.prisma.banners.update({ where: { id }, data: dto });
+    await this.markImagesUsed([dto.image_url, dto.mobile_image_url], `banner:${id}`);
+    return banner;
   }
 
   async deleteBanner(id: string) {
     return this.prisma.banners.delete({ where: { id } });
+  }
+
+  /**
+   * Helper to mark images as 'used' in uploaded_images tracker
+   */
+  private async markImagesUsed(urls: (string | null | undefined)[], usedIn: string) {
+    if (!urls || urls.length === 0) return;
+    try {
+      const values = new Set<string>();
+      const filenames = new Set<string>();
+      for (const raw of urls) {
+        if (!raw || typeof raw !== 'string') continue;
+        const trimmed = raw.trim();
+        if (!trimmed) continue;
+        values.add(trimmed);
+        const clean = trimmed.split('?')[0].split('#')[0];
+        const fn = clean.split('/').pop();
+        if (fn && fn.includes('.')) {
+          filenames.add(fn.toLowerCase());
+        }
+      }
+      if (values.size === 0 && filenames.size === 0) return;
+
+      const orConditions: any[] = [];
+      if (values.size > 0) {
+        const arr = Array.from(values);
+        orConditions.push({ image_url: { in: arr } });
+        orConditions.push({ image_path: { in: arr } });
+      }
+      if (filenames.size > 0) {
+        const arr = Array.from(filenames);
+        orConditions.push({ filename: { in: arr } });
+      }
+
+      await (this.prisma as any).uploaded_images.updateMany({
+        where: { OR: orConditions },
+        data: { status: 'used', used_in: usedIn, used_at: new Date() },
+      });
+    } catch (_) {}
   }
 
   // Allowed public keys for Storefront / Guest visitors (Secrets NEVER exposed)
@@ -551,6 +594,17 @@ export class SiteSettingsService implements OnModuleInit {
         });
       });
     await Promise.all(ops);
+
+    // Track any image settings (e.g. logo, favicon, og_image, size_chart)
+    try {
+      const imgValues = Object.values(settings).filter(
+        (v) => typeof v === 'string' && /\.(webp|jpg|jpeg|png|gif|svg|avif|ico)/i.test(v),
+      );
+      if (imgValues.length > 0) {
+        await this.markImagesUsed(imgValues, 'site_settings');
+      }
+    } catch (_) {}
+
     return this.getAllSettings();
   }
 

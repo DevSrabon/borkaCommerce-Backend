@@ -777,3 +777,24 @@ model visitor_logs {
   @@index([created_at])
   @@index([visitor_id, created_at])
 }
+
+// 37. Uploaded Images Tracker (Tracks used / unused status for storage garbage collection)
+model uploaded_images {
+  id          String    @id @default(uuid())
+  filename    String    @db.VarChar(255)
+  folder      String    @default("media") @db.VarChar(50)
+  image_url   String    @db.Text
+  image_path  String?   @db.Text
+  storage     String    @default("local") @db.VarChar(50) // 'local', 'cloudinary', 'r2', 's3'
+  status      String    @default("unused") @db.VarChar(20) // 'unused', 'used'
+  mime_type   String?   @db.VarChar(100)
+  size_bytes  Int?
+  used_in     String?   @db.VarChar(100)
+  used_at     DateTime?
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+
+  @@index([status])
+  @@index([filename])
+  @@index([created_at])
+}
